@@ -42,44 +42,31 @@ export async function GET(request) {
   }
 
   try {
-    // Try direct profile endpoint first
-    const directRes = await fetch(
-      `https://backend.portal.abs.xyz/api/profiles/${wallet.toLowerCase()}`,
-      { headers: { Accept: "application/json" } }
-    );
-
-    if (directRes.ok) {
-      const data = await directRes.json();
-      if (data?.name || data?.username) {
-        return NextResponse.json({
-          found: true,
-          username: data.name || data.username,
-          avatar: data.image || data.avatar || null,
-        });
-      }
-    }
-
-    // Fallback: search by wallet address (try both original + lowercase query)
-    const searchQueries = [wallet, wallet.toLowerCase()];
-    const searchResponses = await Promise.all(
-      searchQueries.map((query) =>
-        fetch(`https://backend.portal.abs.xyz/api/search/global?query=${encodeURIComponent(query)}`, {
-          headers: { Accept: "application/json" },
-        }).catch(() => null)
-      )
-    );
-
+    // Source of truth: search/global endpoint
+    const searchQueries = [wallet, wallet.toLowerCase(), wallet.toUpperCase()];
     let match = null;
-    for (const res of searchResponses) {
-      if (!res || !res.ok) continue;
+
+    for (const query of searchQueries) {
+      const res = await fetch(
+        `https://backend.portal.abs.xyz/api/search/global?query=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "Mozilla/5.0",
+          },
+          cache: "no-store",
+        }
+      );
+      if (!res.ok) continue;
+
       const data = await res.json();
-      const candidates = [
-        ...(data?.results?.users || []),
-        ...(data?.results?.profiles || []),
-        ...(data?.results?.wallets || []),
-        ...(data?.results?.accounts || []),
-      ];
-      match = findBestMatch(candidates, wallet);
+      const users = Array.isArray(data?.results?.users) ? data.results.users : [];
+
+      match = findBestMatch(users, wallet);
+      if (!match && users.length > 0) {
+        // Fallback when provider doesn't return full address shape consistently
+        match = users[0];
+      }
       if (match) break;
     }
 

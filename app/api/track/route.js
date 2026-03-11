@@ -81,12 +81,10 @@ export async function GET(request) {
   }
 
   try {
-    // Smart fetch: limit pages based on filter
-    // recent (3h) -> 1 page (100 txns)
-    // 24h         -> 5 pages (500 txns)
-    // 7d          -> 20 pages (2000 txns)
+    // Smart fetch caps (time-window still applied below).
+    // recent/24h raised to reduce undercount for active wallets.
     const PAGE_SIZE = 100;
-    const MAX_TXS = filter === "recent" ? 100 : filter === "24h" ? 500 : 2000;
+    const MAX_TXS = filter === "recent" ? 2000 : filter === "24h" ? 2000 : 2000;
     const MAX_PAGES = Math.ceil(MAX_TXS / PAGE_SIZE);
     const now = Math.floor(Date.now() / 1000);
     const TIME_CUTOFF = filter === "recent" ? 10800 : filter === "24h" ? 86400 : 604800; // recent=3h
