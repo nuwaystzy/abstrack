@@ -38,6 +38,23 @@ function extractXP(user) {
   return null;
 }
 
+function extractTierInfo(user) {
+  const displayName =
+    user?.tier?.displayName ||
+    user?.currentTier?.displayName ||
+    user?.tierDisplayName ||
+    user?.displayTier ||
+    null;
+
+  const mainTier =
+    user?.tier?.mainTier ||
+    user?.currentTier?.mainTier ||
+    user?.tierMain ||
+    null;
+
+  return { displayName, mainTier };
+}
+
 function findBestMatch(candidates, wallet) {
   const target = normalizeAddress(wallet);
   if (!Array.isArray(candidates)) return null;
@@ -113,12 +130,16 @@ export async function GET(request) {
       ...(directProfile || {}),
     };
 
+    const tier = extractTierInfo(merged);
+
     return NextResponse.json({
       found: true,
       username: merged.name || merged.username || null,
       avatar: merged.image || merged.avatar || null,
       verified: (merged.verification || "").toUpperCase() === "VERIFIED",
       xp: extractXP(merged),
+      tierDisplayName: tier.displayName,
+      tierMainTier: tier.mainTier,
     });
 
   } catch {

@@ -19,14 +19,15 @@ const TIER_COLORS = {
   platinum: "#00e5ff",
   diamond: "#4da3ff",
   obsidian: "#8b5cf6",
+  ethereal: "#ff66ff",
 };
 
 async function fetchTiers() {
   const res = await fetch("https://backend.portal.abs.xyz/api/tiers/v2");
   if (!res.ok) throw new Error("Failed to fetch tiers");
   const data = await res.json();
-  if (!Array.isArray(data)) return [];
-  return [...data].sort((a, b) => (a?.xpRequirement || 0) - (b?.xpRequirement || 0));
+  const list = Array.isArray(data) ? data : (Array.isArray(data?.tiers) ? data.tiers : []);
+  return [...list].sort((a, b) => (a?.xpRequirement || 0) - (b?.xpRequirement || 0));
 }
 
 function getUserTier(xp, tiers) {
@@ -36,22 +37,6 @@ function getUserTier(xp, tiers) {
     if (xp >= tier.xpRequirement) current = tier;
   }
   return current;
-}
-
-function getNextTier(xp, tiers) {
-  for (const tier of tiers) {
-    if (xp < tier.xpRequirement) return tier;
-  }
-  return null;
-}
-
-function getTierProgress(xp, currentTier, nextTier) {
-  if (!currentTier) return 0;
-  if (!nextTier) return 100;
-  const minXP = currentTier.xpRequirement;
-  const maxXP = nextTier.xpRequirement;
-  if (maxXP <= minXP) return 100;
-  return ((xp - minXP) / (maxXP - minXP)) * 100;
 }
 
 function extractUserXP(user) {
@@ -160,6 +145,8 @@ export default function Page() {
             avatar: profileData.avatar || null,
             verified: !!profileData.verified,
             xp: typeof profileData.xp === "number" ? profileData.xp : null,
+            tierDisplayName: profileData.tierDisplayName || null,
+            tierMainTier: profileData.tierMainTier || null,
           });
         } else {
           // Fallback: direct lookup when server-side profile lookup misses
@@ -175,6 +162,8 @@ export default function Page() {
                 avatar: match.image || null,
                 verified: match.verification === "VERIFIED",
                 xp: extractUserXP(match),
+                tierDisplayName: match.tier?.displayName || match.tierDisplayName || null,
+                tierMainTier: match.tier?.mainTier || match.tierMain || null,
               });
             }
           }
@@ -208,14 +197,12 @@ export default function Page() {
 
   const displayedWallet = scannedWallet || wallet;
   const userXP = typeof profile?.xp === "number" ? profile.xp : null;
-  const hasTierData = userXP !== null && tiers.length > 0;
-  const currentTier = hasTierData ? getUserTier(userXP, tiers) : null;
-  const nextTier = hasTierData ? getNextTier(userXP, tiers) : null;
-  const tierProgress = hasTierData
-    ? Math.max(0, Math.min(100, getTierProgress(userXP, currentTier, nextTier)))
-    : 0;
+  const tierFromXP = userXP !== null && tiers.length > 0 ? getUserTier(userXP, tiers) : null;
+  const currentTier = tierFromXP || (profile?.tierDisplayName ? {
+    displayName: profile.tierDisplayName,
+    mainTier: profile.tierMainTier || "silver",
+  } : null);
   const tierColor = currentTier?.mainTier ? (TIER_COLORS[currentTier.mainTier] || "#4b5563") : "#4b5563";
-  const xpFormatter = new Intl.NumberFormat("en-US");
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#000", color: "#e5e7eb", fontFamily: "'Inter',sans-serif", overflow: "hidden" }}>
@@ -561,24 +548,6 @@ export default function Page() {
                             {currentTier.displayName || currentTier.name}
                           </span>
                         )}
-                      </div>
-                    )}
-                    {currentTier && (
-                      <div style={{ marginBottom: 6 }}>
-                        <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 4 }}>
-                          XP: {xpFormatter.format(Math.floor(userXP || 0))} / {xpFormatter.format(Math.floor((nextTier?.xpRequirement ?? userXP) || 0))}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 148, height: 4, borderRadius: 99, background: "#1e1e1e", overflow: "hidden" }}>
-                            <div style={{
-                              height: "100%",
-                              width: `${tierProgress}%`,
-                              borderRadius: 99,
-                              background: `linear-gradient(90deg, ${tierColor}99, ${tierColor})`,
-                            }} />
-                          </div>
-                          <span style={{ fontSize: 10, color: "#7c8796", width: 32, textAlign: "right" }}>{Math.round(tierProgress)}%</span>
-                        </div>
                       </div>
                     )}
                     <div style={{ fontSize: 12, fontWeight: profile?.username ? 400 : 700, color: profile?.username ? "#555" : "#fff", fontFamily: "monospace" }}>
