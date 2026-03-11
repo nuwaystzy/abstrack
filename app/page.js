@@ -12,6 +12,70 @@ const CATEGORY_LABELS = {
   unknown: { label: "Unknown", color: "#374151", bg: "rgba(55,65,81,0.08)"    },
 };
 
+const TIER_COLORS = {
+  bronze: "#cd7f32",
+  silver: "#c0c0c0",
+  gold: "#ffd700",
+  platinum: "#00e5ff",
+  diamond: "#4da3ff",
+  obsidian: "#8b5cf6",
+};
+
+async function fetchTiers() {
+  const res = await fetch("https://backend.portal.abs.xyz/api/tiers/v2");
+  if (!res.ok) throw new Error("Failed to fetch tiers");
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return [...data].sort((a, b) => (a?.xpRequirement || 0) - (b?.xpRequirement || 0));
+}
+
+function getUserTier(xp, tiers) {
+  if (!tiers.length) return null;
+  let current = tiers[0];
+  for (const tier of tiers) {
+    if (xp >= tier.xpRequirement) current = tier;
+  }
+  return current;
+}
+
+function getNextTier(xp, tiers) {
+  for (const tier of tiers) {
+    if (xp < tier.xpRequirement) return tier;
+  }
+  return null;
+}
+
+function getTierProgress(xp, currentTier, nextTier) {
+  if (!currentTier) return 0;
+  if (!nextTier) return 100;
+  const minXP = currentTier.xpRequirement;
+  const maxXP = nextTier.xpRequirement;
+  if (maxXP <= minXP) return 100;
+  return ((xp - minXP) / (maxXP - minXP)) * 100;
+}
+
+function extractUserXP(user) {
+  const candidates = [
+    user?.xp,
+    user?.experience,
+    user?.totalXp,
+    user?.xpPoints,
+    user?.points,
+    user?.stats?.xp,
+    user?.profile?.xp,
+    user?.progress?.xp,
+    user?.tierProgress?.xp,
+    user?.tierProgress?.currentXp,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
 function CategoryBadge({ category }) {
   const c = CATEGORY_LABELS[category] || CATEGORY_LABELS.unknown;
   return (
@@ -43,6 +107,7 @@ export default function Page() {
   const [showSettings, setShowSettings] = useState(false);
   const [fontSize, setFontSize] = useState("md");
   const [profile, setProfile] = useState(null);
+  const [tiers, setTiers] = useState([]);
 
   const NAV_ITEMS = [
     { id: "tracker", label: "Tracker", icon: "⬡", disabled: false },
@@ -56,6 +121,16 @@ export default function Page() {
       setActiveNav("tracker");
     }
   }, [activeNav]);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchTiers()
+      .then((data) => {
+        if (mounted) setTiers(data);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
 
   async function handleSearch(activeFilter = filter, walletOverride = wallet) {
     const targetWallet = walletOverride.trim();
@@ -84,6 +159,7 @@ export default function Page() {
             username: profileData.username || null,
             avatar: profileData.avatar || null,
             verified: !!profileData.verified,
+            xp: typeof profileData.xp === "number" ? profileData.xp : null,
           });
         } else {
           // Fallback: direct lookup when server-side profile lookup misses
@@ -98,6 +174,7 @@ export default function Page() {
                 username: match.name || null,
                 avatar: match.image || null,
                 verified: match.verification === "VERIFIED",
+                xp: extractUserXP(match),
               });
             }
           }
@@ -130,6 +207,15 @@ export default function Page() {
     : [];
 
   const displayedWallet = scannedWallet || wallet;
+  const userXP = typeof profile?.xp === "number" ? profile.xp : null;
+  const hasTierData = userXP !== null && tiers.length > 0;
+  const currentTier = hasTierData ? getUserTier(userXP, tiers) : null;
+  const nextTier = hasTierData ? getNextTier(userXP, tiers) : null;
+  const tierProgress = hasTierData
+    ? Math.max(0, Math.min(100, getTierProgress(userXP, currentTier, nextTier)))
+    : 0;
+  const tierColor = currentTier?.mainTier ? (TIER_COLORS[currentTier.mainTier] || "#4b5563") : "#4b5563";
+  const xpFormatter = new Intl.NumberFormat("en-US");
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#000", color: "#e5e7eb", fontFamily: "'Inter',sans-serif", overflow: "hidden" }}>
@@ -446,13 +532,13 @@ export default function Page() {
                   </div>
                   <div>
                     {profile?.username && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{profile.username}</span>
                         {profile.verified && (
                           <span style={{
                             fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
                             background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.2)",
-                          }}>✓ verified</span>
+                          }}>{`\u2713`} verified</span>
                         )}
                         {!profile.verified && (
                           <span style={{
@@ -460,6 +546,39 @@ export default function Page() {
                             background: "rgba(255,255,255,0.04)", color: "#555", border: "1px solid #1f1f1f",
                           }}>abs</span>
                         )}
+                        {currentTier && (
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 800,
+                            letterSpacing: "0.04em",
+                            padding: "2px 7px",
+                            borderRadius: 99,
+                            textTransform: "uppercase",
+                            color: tierColor,
+                            background: `${tierColor}14`,
+                            border: `1px solid ${tierColor}45`,
+                          }}>
+                            {currentTier.displayName || currentTier.name}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {currentTier && (
+                      <div style={{ marginBottom: 6 }}>
+                        <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 4 }}>
+                          XP: {xpFormatter.format(Math.floor(userXP || 0))} / {xpFormatter.format(Math.floor((nextTier?.xpRequirement ?? userXP) || 0))}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 148, height: 4, borderRadius: 99, background: "#1e1e1e", overflow: "hidden" }}>
+                            <div style={{
+                              height: "100%",
+                              width: `${tierProgress}%`,
+                              borderRadius: 99,
+                              background: `linear-gradient(90deg, ${tierColor}99, ${tierColor})`,
+                            }} />
+                          </div>
+                          <span style={{ fontSize: 10, color: "#7c8796", width: 32, textAlign: "right" }}>{Math.round(tierProgress)}%</span>
+                        </div>
                       </div>
                     )}
                     <div style={{ fontSize: 12, fontWeight: profile?.username ? 400 : 700, color: profile?.username ? "#555" : "#fff", fontFamily: "monospace" }}>
@@ -695,5 +814,6 @@ export default function Page() {
     </div>
   );
 }
+
 
 

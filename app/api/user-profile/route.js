@@ -15,6 +15,29 @@ function extractAddress(user) {
   );
 }
 
+function extractXP(user) {
+  const candidates = [
+    user?.xp,
+    user?.experience,
+    user?.totalXp,
+    user?.xpPoints,
+    user?.points,
+    user?.stats?.xp,
+    user?.profile?.xp,
+    user?.progress?.xp,
+    user?.tierProgress?.xp,
+    user?.tierProgress?.currentXp,
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
 function findBestMatch(candidates, wallet) {
   const target = normalizeAddress(wallet);
   if (!Array.isArray(candidates)) return null;
@@ -77,6 +100,7 @@ export async function GET(request) {
       username: match.name || match.username || null,
       avatar: match.image || match.avatar || null,
       verified: match.verification === "VERIFIED",
+      xp: extractXP(match),
     });
 
   } catch {
