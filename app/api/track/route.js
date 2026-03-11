@@ -164,6 +164,7 @@ export async function GET(request) {
     txns = txns.filter(tx => tx?.from?.toLowerCase() === walletLower);
     txns = txns.filter(isSuccessfulTx);
     if (txns.length > MAX_TXS) txns = txns.slice(0, MAX_TXS);
+    const rawTotalTxns = txns.length;
 
     const lastActive = txns[0]?.timeStamp
       ? `${timeAgo(txns[0].timeStamp)} · ${formatDate(txns[0].timeStamp)}`
@@ -195,8 +196,9 @@ export async function GET(request) {
       appMap.get(key).count++;
     }
 
-    const apps = Array.from(appMap.values())
-      .sort((a, b) => b.count - a.count);
+    const apps = Array.from(appMap.values()).sort((a, b) => b.count - a.count);
+    const appTxnsTotal = apps.reduce((sum, app) => sum + app.count, 0);
+    const excludedTxns = Math.max(0, rawTotalTxns - appTxnsTotal);
 
     // Group by category
     const categories = {};
@@ -211,10 +213,14 @@ export async function GET(request) {
       totalApps: apps.length,
       knownCount: apps.filter(a => a.known).length,
       unknownCount,
+      rawTotalTxns,
+      appTxnsTotal,
+      excludedTxns,
       categories: uniqueCats,
     };
 
-    return NextResponse.json({ totalTxns: txns.length, uniqueApps: apps.length, lastActive, apps, categories, stats });
+    // Keep headline total aligned with the app table total.
+    return NextResponse.json({ totalTxns: appTxnsTotal, uniqueApps: apps.length, lastActive, apps, categories, stats });
 
   } catch (err) {
     console.error("API error:", err);
