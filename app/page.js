@@ -327,6 +327,7 @@ export default function Page() {
           {NAV_ITEMS.map(item => {
             const isDisabled = !!item.disabled;
             const isActive = activeNav === item.id && !isDisabled;
+            const sidebarOpen = !collapsed;
             return (
               <button
                 key={item.id}
@@ -336,23 +337,38 @@ export default function Page() {
                 title={isDisabled ? `${item.label} - Coming soon` : item.label}
                 style={{
                   display: "flex", alignItems: "center",
-                  gap: 10, margin: "0 8px",
-                  padding: collapsed ? "7px 7px" : "7px 10px",
-                  borderRadius: 8, border: "none",
+                  justifyContent: collapsed ? "center" : "flex-start",
+                  gap: collapsed ? 0 : 10,
+                  margin: collapsed ? "0 6px" : "0 8px",
+                  padding: collapsed ? "4px" : "8px 10px",
+                  borderRadius: 12,
+                  border: sidebarOpen && isActive ? "1px solid #23262d" : "1px solid transparent",
                   cursor: isDisabled ? "not-allowed" : "pointer",
                   pointerEvents: isDisabled ? "none" : "auto",
-                  background: isActive ? "#1a1a1a" : "transparent",
+                  background: sidebarOpen && isActive ? "linear-gradient(90deg,#1a1d24 0%, #181a20 100%)" : "transparent",
                   color: isActive ? "#fff" : isDisabled ? "#394150" : "#4b5563",
-                  transition: "all 0.15s", textAlign: "left",
+                  transition: "all 0.18s", textAlign: "left",
                   opacity: isDisabled ? 0.92 : 1,
+                  boxShadow: sidebarOpen && isActive ? "inset 0 1px 0 rgba(255,255,255,0.03)" : "none",
                 }}>
                 <span style={{
-                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                  background: isActive ? "#2a2a2a" : "#141414",
+                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                  background: sidebarOpen
+                    ? (isActive ? "#232833" : "#12151b")
+                    : (isActive ? "#151922" : "#101318"),
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 13,
-                  color: isActive ? "#ffffff" : isDisabled ? "#374151" : "#4b5563",
-                  border: "1px solid " + (isActive ? "#2e2e2e" : "#1a1a1a"),
+                  lineHeight: 1,
+                  color: isActive
+                    ? "#34d399"
+                    : isDisabled
+                      ? "#374151"
+                      : "#4b5563",
+                  border: "1px solid " + (sidebarOpen ? (isActive ? "#353d4c" : "#1d222b") : "#1a1d24"),
+                  boxShadow: sidebarOpen
+                    ? (isActive ? "0 0 0 1px rgba(255,255,255,0.03), inset 0 1px 2px rgba(255,255,255,0.08)" : "inset 0 1px 1px rgba(255,255,255,0.04)")
+                    : "none",
+                  textAlign: "center",
                 }}>{item.icon}</span>
                 {!collapsed && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0, width: "100%" }}>
@@ -400,9 +416,10 @@ export default function Page() {
           <button onClick={e => { e.stopPropagation(); setShowSettings(s => !s); }}
             style={{
               width: 36, height: 36, borderRadius: 10,
-              background: showSettings ? "#1e1e1e" : "rgba(255,255,255,0.03)",
-              border: showSettings ? "1px solid #2e2e2e" : "1px solid #1a1a1a",
+              background: showSettings ? "#232833" : "#12151b",
+              border: showSettings ? "1px solid #353d4c" : "1px solid #1d222b",
               color: showSettings ? "#34d399" : "#404040",
+              boxShadow: showSettings ? "0 0 0 1px rgba(255,255,255,0.03), inset 0 1px 2px rgba(255,255,255,0.08)" : "inset 0 1px 1px rgba(255,255,255,0.04)",
               cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
             }}>⚙</button>
         </div>
