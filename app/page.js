@@ -80,6 +80,25 @@ export default function Page() {
   const [suggestions, setSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(1280);
+
+  useEffect(() => {
+    const updateViewport = () => {
+      if (typeof window !== "undefined") setViewportWidth(window.innerWidth || 1280);
+    };
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  const is320 = viewportWidth <= 320;
+  const is480 = viewportWidth <= 480;
+  const is768 = viewportWidth <= 768;
+  const is1024 = viewportWidth <= 1024;
+
+  useEffect(() => {
+    if (is1024) setCollapsed(true);
+  }, [is1024]);
 
   const NAV_ITEMS = [
     { id: "tracker", label: "Tracker", icon: "⬡", disabled: false },
@@ -215,19 +234,49 @@ export default function Page() {
     mainTier: profile.tierMainTier || "silver",
   } : null);
   const tierColor = currentTier?.mainTier ? (TIER_COLORS[currentTier.mainTier] || "#4b5563") : "#4b5563";
+  const sidebarWidth = is1024 ? 220 : 200;
+  const contentPadding = is480 ? 10 : is768 ? 14 : 24;
+  const searchCardPadding = is480 ? "12px 12px 10px" : "20px 20px 16px";
+  const statsColumns = is480 ? "1fr" : is768 ? "1fr 1fr" : "1fr 1fr 1fr";
+  const appTableMinWidth = is768 ? 720 : 0;
+  const bodyFontSize = is320 ? 12 : is480 ? 13 : is768 ? 14 : 14;
+  const searchBtnPadding = is480 ? "10px 14px" : "10px 18px";
+  const searchInputFont = is480 ? 12 : 13;
+  const profileHeaderDirection = is768 ? "column" : "row";
+  const profileHeaderAlign = is768 ? "flex-start" : "center";
+  const profileHeaderGap = is768 ? 10 : 12;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#000", color: "#e5e7eb", fontFamily: "'Inter',sans-serif", overflow: "hidden" }}>
+      {is1024 && !collapsed && (
+        <div
+          onClick={() => setCollapsed(true)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.48)",
+            zIndex: 90,
+          }}
+        />
+      )}
 
       {/* SIDEBAR */}
       <aside style={{
-        width: collapsed ? 56 : 200,
+        width: is1024 ? sidebarWidth : (collapsed ? 56 : sidebarWidth),
         background: "#050505",
         borderRight: "1px solid #1a1a1a",
         display: "flex", flexDirection: "column",
-        transition: "width 0.2s ease",
+        transition: is1024 ? "transform 0.24s ease" : "width 0.2s ease",
         flexShrink: 0, position: "relative",
         overflow: "hidden",
+        ...(is1024 ? {
+          position: "fixed",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 100,
+          transform: collapsed ? "translateX(-100%)" : "translateX(0)",
+        } : {}),
       }}>
 
         {/* Logo header */}
@@ -392,7 +441,7 @@ export default function Page() {
         flex: 1, display: "flex", flexDirection: "column", overflow: "hidden",
         position: "relative",
         background: "#040506",
-        fontSize: fontSize === "sm" ? 12 : fontSize === "lg" ? 16 : 14,
+        fontSize: fontSize === "sm" ? 12 : fontSize === "lg" ? 16 : bodyFontSize,
       }}>
         <div
           aria-hidden
@@ -404,7 +453,7 @@ export default function Page() {
             backgroundColor: "#050607",
             backgroundImage:
               "linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
+            backgroundSize: is480 ? "18px 18px" : "24px 24px",
             WebkitMaskImage: "radial-gradient(ellipse at center, #000 52%, transparent 100%)",
             maskImage: "radial-gradient(ellipse at center, #000 52%, transparent 100%)",
             pointerEvents: "none",
@@ -414,25 +463,44 @@ export default function Page() {
         {/* Topbar */}
         <header style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 24px", height: 56,
+          padding: is480 ? "0 10px" : is768 ? "0 14px" : "0 24px", height: 56,
           background: "#000", borderBottom: "1px solid #1a1a1a",
           position: "relative", zIndex: 1,
           flexShrink: 0,
         }}>
-          <div>
-            <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em" }}>Wallet Tracker</span>
-            <span style={{ fontSize: 12, color: "#555", marginLeft: 10 }}>Abstract chain · dapp analytics</span>
+          <div style={{ display: "flex", alignItems: "center", minWidth: 0, gap: 10 }}>
+            {is1024 && (
+              <button
+                onClick={() => setCollapsed((v) => !v)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 9,
+                  border: "1px solid #22302a",
+                  background: "#0b1110",
+                  color: "#9ca3af",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                ☰
+              </button>
+            )}
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontSize: is480 ? 14 : 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em" }}>Wallet Tracker</span>
+              {!is480 && <span style={{ fontSize: 12, color: "#555", marginLeft: 10 }}>Abstract chain · dapp analytics</span>}
+            </div>
           </div>
           <img
             src="https://media.giphy.com/media/v1.Y2lkPWVjZjA1ZTQ3NmVmYWZzbHQxdXc5YXZ5NDE5NXI3dnBvYzFxMHNrZWU1b2gxMGg1diZlcD12MV9zdGlja2Vyc19yZWxhdGVkJmN0PXM/f5DwFJeDOmuFGN5g4d/giphy.gif"
             alt="Live status"
-            style={{ height: 28, width: "auto", display: "block" }}
+            style={{ height: is480 ? 24 : 28, width: "auto", display: "block", flexShrink: 0 }}
           />
         </header>
 
         {/* Body */}
         <div style={{
-          flex: 1, overflowY: "auto", padding: 24,
+          flex: 1, overflowY: "auto", overflowX: "hidden", padding: contentPadding,
           position: "relative", zIndex: 1,
           zoom: fontSize === "sm" ? 0.9 : fontSize === "lg" ? 1.1 : 1,
         }}>
@@ -440,7 +508,7 @@ export default function Page() {
           {/* Search card */}
           <div style={{
             background: "#0a0a0a", border: "1px solid #1a1a1a",
-            borderRadius: 16, padding: "20px 20px 16px", marginBottom: 20,
+            borderRadius: 16, padding: searchCardPadding, marginBottom: 20,
           }}>
             <div
               onMouseEnter={() => setSearchHovered(true)}
@@ -453,7 +521,7 @@ export default function Page() {
                 background: "#070a09",
                 border: searchFocused || searchHovered ? "1px solid rgba(52,211,153,0.45)" : "1px solid #1f2a25",
                 borderRadius: 18,
-                padding: "8px 10px 8px 14px",
+                padding: is480 ? "6px 8px 6px 10px" : "8px 10px 8px 14px",
                 boxShadow: searchFocused || searchHovered
                   ? "0 0 0 1px rgba(52,211,153,0.12), 0 0 26px rgba(0,255,135,0.18), inset 0 0 18px rgba(0,255,135,0.06)"
                   : "inset 0 0 0 rgba(0,0,0,0)",
@@ -491,8 +559,8 @@ export default function Page() {
                   flex: 1,
                   background: "transparent",
                   border: "none",
-                  padding: "10px 2px",
-                  fontSize: 13,
+                  padding: is480 ? "8px 2px" : "10px 2px",
+                  fontSize: searchInputFont,
                   color: "#e5e7eb",
                   outline: "none",
                   fontFamily: "inherit",
@@ -504,13 +572,13 @@ export default function Page() {
                 onClick={() => handleSearch()}
                 disabled={loading}
                 style={{
-                  padding: "10px 18px",
+                  padding: searchBtnPadding,
                   borderRadius: 12,
                   border: "1px solid " + (loading ? "#2b2b2b" : "#2f5f4c"),
                   background: loading ? "#1b1b1b" : "linear-gradient(180deg,#1e2f29,#16211e)",
                   color: loading ? "#666" : "#d9fceb",
                   fontWeight: 800,
-                  fontSize: 13,
+                  fontSize: is480 ? 12 : 13,
                   cursor: loading ? "not-allowed" : "pointer",
                   flexShrink: 0,
                   letterSpacing: "0.02em",
@@ -653,7 +721,7 @@ export default function Page() {
             </div>
 
             {/* Filter tabs */}
-            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
               {[["recent","Recent · 3h"],["24h","Last 24h"],["7d","Last 7 Days"]].map(([val, label]) => (
                 <button key={val} onClick={() => changeFilter(val)}
                   style={{
@@ -696,9 +764,10 @@ export default function Page() {
 
               {/* Wallet header */}
               <div style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
+                display: "flex", flexDirection: profileHeaderDirection, alignItems: profileHeaderAlign, justifyContent: "space-between",
                 padding: "14px 18px", borderRadius: 14,
                 background: "#0a0a0a", border: "1px solid #1a1a1a",
+                gap: profileHeaderGap,
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   {/* Avatar */}
@@ -752,14 +821,14 @@ export default function Page() {
                     </div>
                   </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
+                <div style={{ textAlign: is768 ? "left" : "right", width: is768 ? "100%" : "auto" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>{results.lastActive}</div>
                   <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>Last activity</div>
                 </div>
               </div>
 
               {/* Stats */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: statsColumns, gap: 12 }}>
                 {[
                   { label: "Transactions", value: results.totalTxns, color: "#34d399", note: filter === "recent" ? "last 3h" : filter === "24h" ? "last 24h" : "last 7d" },
                   { label: "Apps Used",    value: results.uniqueApps, color: "#60a5fa", note: `${results.stats?.knownCount || 0} identified` },
@@ -779,12 +848,13 @@ export default function Page() {
               </div>
 
               {/* App table */}
-              <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", overflow: "hidden", background: "#070809" }}>
+              <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", overflowX: is768 ? "auto" : "hidden", overflowY: "hidden", background: "#070809" }}>
+                <div style={{ minWidth: appTableMinWidth || "auto" }}>
 
                 {/* Toolbar */}
                 <div style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "14px 18px", background: "#0a0a0a", borderBottom: "1px solid #1a1a1a",
+                  padding: is480 ? "12px 12px" : "14px 18px", background: "#0a0a0a", borderBottom: "1px solid #1a1a1a",
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>App Interactions</span>
@@ -909,6 +979,7 @@ export default function Page() {
                     </div>
                   );
                 })}
+                </div>
               </div>
 
               {/* Activity distribution */}
@@ -958,10 +1029,10 @@ export default function Page() {
                 <p style={{ fontSize: 15, fontWeight: 700, color: "#374151" }}>No wallet scanned</p>
                 <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Enter an Abstract chain wallet address or username above to get started</p>
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap", justifyContent: "center", width: "100%" }}>
                 {[["Recent · 3h","Fast, last 3 hours"],["Last 24h","Full day activity"],["Last 7 Days","Weekly overview"]].map(([t,d]) => (
                   <div key={t} style={{
-                    padding: "14px 18px", borderRadius: 12, width: 140, textAlign: "center",
+                    padding: "14px 18px", borderRadius: 12, width: is480 ? "100%" : 140, maxWidth: is480 ? 320 : 140, textAlign: "center",
                     background: "#0a0a0a", border: "1px solid #1a1a1a",
                   }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#34d399" }}>{t}</div>
