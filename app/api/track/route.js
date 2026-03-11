@@ -166,8 +166,15 @@ export async function GET(request) {
     if (txns.length > MAX_TXS) txns = txns.slice(0, MAX_TXS);
     const rawTotalTxns = txns.length;
 
-    const lastActive = txns[0]?.timeStamp
-      ? `${timeAgo(txns[0].timeStamp)} · ${formatDate(txns[0].timeStamp)}`
+    // Always compute last activity from the latest tx touching this address,
+    // independent of selected timeframe and dapp-contract matching.
+    const latestAddressTx = allTxns.find((tx) => {
+      const from = (tx?.from || "").toLowerCase();
+      const to = (tx?.to || "").toLowerCase();
+      return from === walletLower || to === walletLower;
+    });
+    const lastActive = latestAddressTx?.timeStamp
+      ? `${timeAgo(latestAddressTx.timeStamp)} · ${formatDate(latestAddressTx.timeStamp)}`
       : "Unknown";
 
     // Resolve all contract interactions — group by APP NAME (merge multi-contract apps)

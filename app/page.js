@@ -39,6 +39,10 @@ function getUserTier(xp, tiers) {
   return current;
 }
 
+function isWalletAddress(value) {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+}
+
 function CategoryBadge({ category }) {
   const c = CATEGORY_LABELS[category] || CATEGORY_LABELS.unknown;
   return (
@@ -71,6 +75,11 @@ export default function Page() {
   const [fontSize, setFontSize] = useState("md");
   const [profile, setProfile] = useState(null);
   const [tiers, setTiers] = useState([]);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchHovered, setSearchHovered] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const NAV_ITEMS = [
     { id: "tracker", label: "Tracker", icon: "⬡", disabled: false },
@@ -95,44 +104,78 @@ export default function Page() {
     return () => { mounted = false; };
   }, []);
 
+  useEffect(() => {
+    const q = wallet.trim();
+    if (!q || !searchFocused) {
+      setSuggestions([]);
+      setLoadingSuggestions(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingSuggestions(true);
+        const res = await fetch(`/api/user-profile?query=${encodeURIComponent(q)}&suggest=1&limit=6`);
+        const data = await res.json();
+        const list = Array.isArray(data?.suggestions) ? data.suggestions : [];
+        setSuggestions(list);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [wallet, searchFocused]);
+
   async function handleSearch(activeFilter = filter, walletOverride = wallet) {
-    const targetWallet = walletOverride.trim();
-    if (!targetWallet) return;
+    const input = walletOverride.trim();
+    if (!input) return;
     setLoading(true);
     setError(null);
     setResults(null);
     setProfile(null);
     setCatFilter("all");
     try {
-      // Fetch track + profile in parallel
-      const [trackRes, profileRes] = await Promise.all([
-        fetch(`/api/track?wallet=${targetWallet}&filter=${activeFilter}`),
-        fetch(`/api/user-profile?wallet=${targetWallet}`),
-      ]);
+      // 1) Resolve username/wallet input through profile API
+      const profileRes = await fetch(`/api/user-profile?query=${encodeURIComponent(input)}`);
+      const profileData = await profileRes.json().catch(() => ({}));
+      if (!profileRes.ok && !isWalletAddress(input)) {
+        throw new Error(profileData?.error || "Failed to resolve user");
+      }
+
+      const fallbackWallet = isWalletAddress(input) ? input.trim() : null;
+      const resolvedWallet = profileData?.resolvedWallet || fallbackWallet;
+      if (!resolvedWallet) throw new Error("User or wallet not found");
+
+      // 2) Fetch track data using resolved wallet address
+      const trackRes = await fetch(`/api/track?wallet=${resolvedWallet}&filter=${activeFilter}`);
       const data = await trackRes.json();
       if (!trackRes.ok) throw new Error(data.error || "Failed to fetch");
       setResults(data);
-      setScannedWallet(targetWallet);
+      setScannedWallet(resolvedWallet);
 
       try {
-        const profileData = await profileRes.json();
-        if (profileData?.found) {
-          setProfile({
-            found: true,
-            username: profileData.username || null,
-            avatar: profileData.avatar || null,
-            verified: !!profileData.verified,
-            xp: typeof profileData.xp === "number" ? profileData.xp : null,
-            tierV2:
-              typeof profileData.tierV2 === "number"
-                ? profileData.tierV2
-                : (typeof profileData.tierV2 === "string" && profileData.tierV2.trim() !== "" && !Number.isNaN(Number(profileData.tierV2)))
-                  ? Number(profileData.tierV2)
-                  : null,
-            tierDisplayName: profileData.tierDisplayName || null,
-            tierMainTier: profileData.tierMainTier || null,
-          });
+        if (!profileData?.found) {
+          setProfile(null);
+          return;
         }
+        setProfile({
+          found: true,
+          username: profileData.username || null,
+          avatar: profileData.avatar || null,
+          verified: !!profileData.verified,
+          xp: typeof profileData.xp === "number" ? profileData.xp : null,
+          tierV2:
+            typeof profileData.tierV2 === "number"
+              ? profileData.tierV2
+              : (typeof profileData.tierV2 === "string" && profileData.tierV2.trim() !== "" && !Number.isNaN(Number(profileData.tierV2)))
+                ? Number(profileData.tierV2)
+                : null,
+          tierDisplayName: profileData.tierDisplayName || null,
+          tierMainTier: profileData.tierMainTier || null,
+        });
       } catch {}
     } catch (e) {
       setError(e.message);
@@ -399,29 +442,214 @@ export default function Page() {
             background: "#0a0a0a", border: "1px solid #1a1a1a",
             borderRadius: 16, padding: "20px 20px 16px", marginBottom: 20,
           }}>
-            <div style={{ display: "flex", gap: 12 }}>
-              <input type="text" placeholder="Enter wallet address (0x...)"
-                value={wallet} onChange={e => setWallet(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleSearch()}
+            <div
+              onMouseEnter={() => setSearchHovered(true)}
+              onMouseLeave={() => setSearchHovered(false)}
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                background: "#070a09",
+                border: searchFocused || searchHovered ? "1px solid rgba(52,211,153,0.45)" : "1px solid #1f2a25",
+                borderRadius: 18,
+                padding: "8px 10px 8px 14px",
+                boxShadow: searchFocused || searchHovered
+                  ? "0 0 0 1px rgba(52,211,153,0.12), 0 0 26px rgba(0,255,135,0.18), inset 0 0 18px rgba(0,255,135,0.06)"
+                  : "inset 0 0 0 rgba(0,0,0,0)",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <span
+                aria-hidden
                 style={{
-                  flex: 1, background: "#050505", border: "1px solid #1f1f1f",
-                  borderRadius: 12, padding: "12px 16px", fontSize: 13,
-                  color: "#e5e7eb", outline: "none",
+                  fontSize: 21,
+                  lineHeight: 1,
+                  marginRight: 2,
+                  color: searchFocused || searchHovered ? "#34d399" : "#6b7280",
+                  transition: "color 0.2s ease",
+                }}
+              >
+                ⌕
+              </span>
+              <input
+                type="text"
+                placeholder="Search by address or username..."
+                value={wallet}
+                onChange={e => setWallet(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleSearch()}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  setShowSuggestions(true);
+                }}
+                onBlur={() => {
+                  setSearchFocused(false);
+                  setTimeout(() => setShowSuggestions(false), 120);
+                }}
+                onClick={() => setShowSuggestions(true)}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  padding: "10px 2px",
+                  fontSize: 13,
+                  color: "#e5e7eb",
+                  outline: "none",
                   fontFamily: "inherit",
+                  fontWeight: 600,
                 }}
               />
-              <button onClick={() => handleSearch()} disabled={loading}
+              <div style={{ width: 1, height: 30, background: "#20302a", opacity: 0.9 }} />
+              <button
+                onClick={() => handleSearch()}
+                disabled={loading}
                 style={{
-                  padding: "12px 24px", borderRadius: 12, border: "none",
-                  background: loading ? "#1e1e1e" : "#e5e7eb",
-                  color: loading ? "#555" : "#000",
-                  fontWeight: 800, fontSize: 13, cursor: loading ? "not-allowed" : "pointer",
-                  flexShrink: 0, letterSpacing: "-0.01em",
-                  boxShadow: loading ? "none" : "0 0 16px rgba(52,211,153,0.25)",
-                  transition: "all 0.15s",
-                }}>
+                  padding: "10px 18px",
+                  borderRadius: 12,
+                  border: "1px solid " + (loading ? "#2b2b2b" : "#2f5f4c"),
+                  background: loading ? "#1b1b1b" : "linear-gradient(180deg,#1e2f29,#16211e)",
+                  color: loading ? "#666" : "#d9fceb",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: loading ? "not-allowed" : "pointer",
+                  flexShrink: 0,
+                  letterSpacing: "0.02em",
+                  boxShadow: loading ? "none" : "0 8px 15px rgba(0,0,0,0.35), 0 0 0 1px rgba(52,211,153,0.14)",
+                  transition: "all 0.2s ease",
+                }}
+                onMouseEnter={e => {
+                  if (loading) return;
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.background = "linear-gradient(180deg,#2ac483,#22b377)";
+                  e.currentTarget.style.color = "#062017";
+                  e.currentTarget.style.boxShadow = "0 14px 22px rgba(46,229,157,0.28), 0 0 20px rgba(46,229,157,0.3)";
+                  e.currentTarget.style.borderColor = "#2ee59d";
+                }}
+                onMouseLeave={e => {
+                  if (loading) return;
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.background = "linear-gradient(180deg,#1e2f29,#16211e)";
+                  e.currentTarget.style.color = "#d9fceb";
+                  e.currentTarget.style.boxShadow = "0 8px 15px rgba(0,0,0,0.35), 0 0 0 1px rgba(52,211,153,0.14)";
+                  e.currentTarget.style.borderColor = "#2f5f4c";
+                }}
+                onMouseDown={e => {
+                  if (loading) return;
+                  e.currentTarget.style.transform = "translateY(1px)";
+                }}
+                onMouseUp={e => {
+                  if (loading) return;
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+              >
                 {loading ? "Scanning..." : "Scan →"}
               </button>
+
+              {showSuggestions && searchFocused && wallet.trim() && (
+                <div style={{
+                  position: "absolute",
+                  top: "calc(100% + 10px)",
+                  left: 0,
+                  right: 0,
+                  zIndex: 30,
+                  background: "#0b0f0d",
+                  border: "1px solid #1f2f28",
+                  borderRadius: 14,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.45), 0 0 20px rgba(52,211,153,0.12)",
+                  overflow: "hidden",
+                }}>
+                  <div style={{
+                    padding: "10px 12px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.06em",
+                    color: "#5f6f67",
+                    borderBottom: "1px solid #1b2622",
+                  }}>
+                    SUGGESTIONS
+                  </div>
+                  {loadingSuggestions && (
+                    <div style={{ padding: "12px", fontSize: 12, color: "#6b7280" }}>Searching...</div>
+                  )}
+                  {!loadingSuggestions && suggestions.length === 0 && (
+                    <div style={{ padding: "12px", fontSize: 12, color: "#6b7280" }}>No user found.</div>
+                  )}
+                  {!loadingSuggestions && suggestions.map((s, idx) => (
+                    <button
+                      key={`${s.resolvedWallet || s.username || "s"}-${idx}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        const value = s.username || s.resolvedWallet || "";
+                        setWallet(value);
+                        setShowSuggestions(false);
+                        if (s.resolvedWallet) {
+                          handleSearch(filter, s.resolvedWallet);
+                        } else if (value) {
+                          handleSearch(filter, value);
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "none",
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                        borderTop: idx === 0 ? "none" : "1px solid #17221e",
+                        color: "#d9fceb",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        background: "rgba(52,211,153,0.14)",
+                        border: "1px solid rgba(52,211,153,0.22)",
+                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 12,
+                        color: "#34d399",
+                        fontWeight: 800,
+                      }}>
+                        {s.avatar
+                          ? <img src={s.avatar} alt={s.username || "user"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          : (s.username || s.resolvedWallet || "?").slice(0, 1).toUpperCase()}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f3f4f6", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {s.username || "Unknown"}
+                          </span>
+                          {s.verified && (
+                            <span style={{
+                              fontSize: 9,
+                              fontWeight: 800,
+                              color: "#34d399",
+                              background: "rgba(52,211,153,0.12)",
+                              border: "1px solid rgba(52,211,153,0.25)",
+                              borderRadius: 99,
+                              padding: "1px 6px",
+                            }}>
+                              verified
+                            </span>
+                          )}
+                        </div>
+                        {s.resolvedWallet && (
+                          <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+                            {s.resolvedWallet}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Filter tabs */}
@@ -714,9 +942,6 @@ export default function Page() {
                 </div>
               )}
 
-              <p style={{ textAlign: "center", fontSize: 10, color: "#242424", padding: "4px 0 8px" }}>
-                Abstract Chain · ID 2741 · Etherscan V2 API
-              </p>
             </div>
           )}
 
@@ -731,7 +956,7 @@ export default function Page() {
               }}>⬡</div>
               <div style={{ textAlign: "center" }}>
                 <p style={{ fontSize: 15, fontWeight: 700, color: "#374151" }}>No wallet scanned</p>
-                <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Enter an Abstract chain wallet address above to get started</p>
+                <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Enter an Abstract chain wallet address or username above to get started</p>
               </div>
               <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                 {[["Recent · 3h","Fast, last 3 hours"],["Last 24h","Full day activity"],["Last 7 Days","Weekly overview"]].map(([t,d]) => (

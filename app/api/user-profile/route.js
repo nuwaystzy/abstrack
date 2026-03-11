@@ -14,6 +14,10 @@ function normalizeAddress(value) {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
+function isValidWalletAddress(value) {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
 function getAbsHeaders() {
   const headers = {
     Accept: "application/json, text/plain, */*",
@@ -226,30 +230,74 @@ function findBestMatch(candidates, wallet) {
   );
 }
 
+function findBestByQuery(candidates, query) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return candidates[0];
+
+  const byAddress = candidates.find((u) => normalizeAddress(extractAddress(u)) === q);
+  if (byAddress) return byAddress;
+
+  const exactName = candidates.find((u) => String(u?.name || u?.username || "").toLowerCase() === q);
+  if (exactName) return exactName;
+
+  const startsWithName = candidates.find((u) => String(u?.name || u?.username || "").toLowerCase().startsWith(q));
+  if (startsWithName) return startsWithName;
+
+  const containsName = candidates.find((u) => String(u?.name || u?.username || "").toLowerCase().includes(q));
+  if (containsName) return containsName;
+
+  return candidates[0];
+}
+
+function mapSuggestionUser(user) {
+  const resolvedWallet = extractAddress(user);
+  return {
+    username: user?.name || user?.username || null,
+    avatar: user?.image || user?.avatar || null,
+    verified: (user?.verification || "").toUpperCase() === "VERIFIED",
+    resolvedWallet: isValidWalletAddress(resolvedWallet) ? resolvedWallet : null,
+  };
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const wallet = searchParams.get("wallet");
+  const query = searchParams.get("query");
+  const suggest = searchParams.get("suggest") === "1";
+  const limitRaw = Number(searchParams.get("limit") || 5);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(10, limitRaw)) : 5;
+  const input = (query || wallet || "").trim();
   const debug = searchParams.get("debug") === "1";
 
-  if (!wallet || !wallet.startsWith("0x") || wallet.length !== 42) {
-    return NextResponse.json({ error: "Invalid wallet address." }, { status: 400 });
+  if (!input) {
+    return NextResponse.json({ error: "Missing query." }, { status: 400 });
   }
 
   try {
-    let directProfile = null;
-    try {
-      const directRes = await fetch(`https://backend.portal.abs.xyz/api/profiles/${wallet.toLowerCase()}`, {
+    if (suggest) {
+      const res = await fetch(`https://backend.portal.abs.xyz/api/search/global?query=${encodeURIComponent(input)}`, {
         headers: getAbsHeaders(),
         cache: "no-store",
       });
-      if (directRes.ok) directProfile = await directRes.json();
-    } catch {}
+      if (!res.ok) return NextResponse.json({ suggestions: [] });
 
-    const searchQueries = [wallet, wallet.toLowerCase(), wallet.toUpperCase()];
+      const data = await res.json();
+      const users = Array.isArray(data?.results?.users) ? data.results.users : [];
+      const suggestions = users
+        .map(mapSuggestionUser)
+        .filter((u) => u.username || u.resolvedWallet)
+        .slice(0, limit);
+      return NextResponse.json({ suggestions });
+    }
+
+    let resolvedWallet = isValidWalletAddress(input) ? input : null;
+
+    // Resolve user from global search first (works for username and wallet input).
+    const searchQueries = resolvedWallet ? [resolvedWallet, resolvedWallet.toLowerCase(), resolvedWallet.toUpperCase()] : [input];
     let match = null;
-
-    for (const query of searchQueries) {
-      const res = await fetch(`https://backend.portal.abs.xyz/api/search/global?query=${encodeURIComponent(query)}`, {
+    for (const q of searchQueries) {
+      const res = await fetch(`https://backend.portal.abs.xyz/api/search/global?query=${encodeURIComponent(q)}`, {
         headers: getAbsHeaders(),
         cache: "no-store",
       });
@@ -257,12 +305,26 @@ export async function GET(request) {
 
       const data = await res.json();
       const users = Array.isArray(data?.results?.users) ? data.results.users : [];
-      match = findBestMatch(users, wallet);
-      if (!match && users.length > 0) match = users[0];
+      match = resolvedWallet ? (findBestMatch(users, resolvedWallet) || findBestByQuery(users, q)) : findBestByQuery(users, q);
       if (match) break;
     }
 
     if (!match) return NextResponse.json({ found: false });
+    if (!resolvedWallet) {
+      const extracted = extractAddress(match);
+      if (isValidWalletAddress(extracted)) resolvedWallet = extracted;
+    }
+
+    let directProfile = null;
+    if (resolvedWallet) {
+      try {
+        const directRes = await fetch(`https://backend.portal.abs.xyz/api/profiles/${resolvedWallet.toLowerCase()}`, {
+          headers: getAbsHeaders(),
+          cache: "no-store",
+        });
+        if (directRes.ok) directProfile = await directRes.json();
+      } catch {}
+    }
 
     const merged = { ...match, ...(directProfile || {}) };
     const extractedTier = extractTierInfo(merged);
@@ -272,9 +334,9 @@ export async function GET(request) {
     let tierMainTier = extractedTier.mainTier;
     let tierSource = tierV2 !== null || tierDisplayName || tierMainTier ? "official" : "none";
 
-    if (tierV2 === null && !tierDisplayName && !tierMainTier) {
+    if (resolvedWallet && tierV2 === null && !tierDisplayName && !tierMainTier) {
       try {
-        tierV2 = await resolveTierFromAbslysis(wallet);
+        tierV2 = await resolveTierFromAbslysis(resolvedWallet);
         if (tierV2 !== null) tierSource = "abslysis";
       } catch {}
     }
@@ -295,6 +357,7 @@ export async function GET(request) {
       username: merged.name || merged.username || null,
       avatar: merged.image || merged.avatar || null,
       verified: (merged.verification || "").toUpperCase() === "VERIFIED",
+      resolvedWallet: isValidWalletAddress(resolvedWallet) ? resolvedWallet : null,
       xp: extractXP(merged),
       tierV2,
       tierDisplayName,
@@ -304,6 +367,8 @@ export async function GET(request) {
     if (debug) {
       response.debug = {
         source: tierSource,
+        input,
+        resolvedWallet: isValidWalletAddress(resolvedWallet) ? resolvedWallet : null,
         searchMatchKeys: match ? Object.keys(match) : [],
         directProfileKeys: directProfile ? Object.keys(directProfile) : [],
         mergedKeys: Object.keys(merged || {}),
@@ -343,4 +408,3 @@ export async function GET(request) {
     return NextResponse.json({ found: false });
   }
 }
-
