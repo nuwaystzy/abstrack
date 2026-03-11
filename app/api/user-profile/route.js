@@ -9,6 +9,7 @@ const COMMUNITY_WALLET_TTL_MS = 60 * 60 * 1000;
 const communityTierUsersCache = new Map(); // key(tier:page:limit) -> { at, users }
 const communityWalletTierCache = new Map(); // walletLower -> { at, tierV2 }
 const zaddyPageCache = new Map(); // page -> { at, rows, totalPages }
+const ENABLE_ZADDY_FALLBACK = process.env.COMMUNITY_ENABLE_ZADDY !== "false";
 
 function getAbsHeaders() {
   const headers = {
@@ -34,6 +35,8 @@ function getCommunityHeaders() {
     Accept: "application/json, text/plain, */*",
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0",
+    Origin: process.env.COMMUNITY_ZADDYTOOLS_BASE_URL || "https://www.zaddytools.com",
+    Referer: `${(process.env.COMMUNITY_ZADDYTOOLS_BASE_URL || "https://www.zaddytools.com").replace(/\/+$/, "")}/abstract-dashboard`,
   };
 }
 
@@ -281,6 +284,8 @@ async function fetchZaddyPage(page) {
     headers: {
       Accept: "application/json, text/plain, */*",
       "User-Agent": "Mozilla/5.0",
+      Origin: baseUrl,
+      Referer: `${baseUrl.replace(/\/+$/, "")}/abstract-dashboard`,
     },
     cache: "no-store",
   });
@@ -293,8 +298,47 @@ async function fetchZaddyPage(page) {
   return pageData;
 }
 
+async function fetchZaddyByWallet(wallet) {
+  const baseUrl = process.env.COMMUNITY_ZADDYTOOLS_BASE_URL || "https://www.zaddytools.com";
+  const normalized = wallet.toLowerCase();
+  const candidates = [
+    `${baseUrl.replace(/\/+$/, "")}/api/all-wallets?tier=all&page=1&limit=50&sort=tier&search=${encodeURIComponent(normalized)}`,
+    `${baseUrl.replace(/\/+$/, "")}/api/all-wallets?tier=all&page=1&limit=50&sort=tier&q=${encodeURIComponent(normalized)}`,
+    `${baseUrl.replace(/\/+$/, "")}/api/all-wallets?tier=all&page=1&limit=50&sort=tier&wallet=${encodeURIComponent(normalized)}`,
+    `${baseUrl.replace(/\/+$/, "")}/api/all-wallets?tier=all&page=1&limit=50&sort=tier&address=${encodeURIComponent(normalized)}`,
+  ];
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "User-Agent": "Mozilla/5.0",
+          Origin: baseUrl,
+          Referer: `${baseUrl.replace(/\/+$/, "")}/abstract-dashboard`,
+        },
+        cache: "no-store",
+      });
+      if (!res.ok) continue;
+      const payload = await res.json();
+      const { rows } = extractRowsFromZaddyPayload(payload);
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+
+      const hit = rows.find((r) => normalizeAddress(r?.walletAddress || r?.address || r?.wallet) === normalized);
+      if (hit) return extractTierFromRow(hit);
+    } catch {
+      // Ignore candidate failure and continue.
+    }
+  }
+
+  return { tierV2: null, displayName: null, mainTier: null };
+}
+
 async function resolveTierFromZaddy(wallet) {
   const normalized = normalizeAddress(wallet);
+  const direct = await fetchZaddyByWallet(normalized);
+  if (direct.tierV2 !== null || direct.displayName || direct.mainTier) return direct;
+
   const maxPages = Number(process.env.COMMUNITY_ZADDYTOOLS_MAX_PAGES || 30);
   let discoveredTotalPages = null;
 
@@ -389,6 +433,7 @@ export async function GET(request) {
     let tierV2 = extractTierV2(merged);
     let tierDisplayName = extractedTier.displayName;
     let tierMainTier = extractedTier.mainTier;
+    let zaddyTried = false;
 
     let tierSource = tierV2 !== null || tierDisplayName || tierMainTier ? "official" : "none";
     if (tierV2 === null && !tierDisplayName && !tierMainTier) {
@@ -398,8 +443,9 @@ export async function GET(request) {
       } catch {}
     }
 
-    if (tierV2 === null && !tierDisplayName && !tierMainTier) {
+    if (ENABLE_ZADDY_FALLBACK && tierV2 === null && !tierDisplayName && !tierMainTier) {
       try {
+        zaddyTried = true;
         const zaddyTier = await resolveTierFromZaddy(wallet);
         if (zaddyTier.tierV2 !== null || zaddyTier.displayName || zaddyTier.mainTier) {
           tierV2 = zaddyTier.tierV2;
@@ -464,6 +510,8 @@ export async function GET(request) {
           fallbackAttempted: extractedTier.displayName == null && extractedTier.mainTier == null,
           resolvedTierV2: tierV2,
           source: tierSource,
+          zaddyTried,
+          zaddyEnabled: ENABLE_ZADDY_FALLBACK,
           endpoints: {
             abslysis: "https://abslysis.xyz/api/v1/user/fetchUsersByTier",
             zaddytools: "https://www.zaddytools.com/api/all-wallets",
