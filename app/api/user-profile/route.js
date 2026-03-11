@@ -65,6 +65,19 @@ export async function GET(request) {
   }
 
   try {
+    // Try direct profile endpoint first for richer fields (xp, tier progress, avatar)
+    let directProfile = null;
+    try {
+      const directRes = await fetch(`https://backend.portal.abs.xyz/api/profiles/${wallet.toLowerCase()}`, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Mozilla/5.0",
+        },
+        cache: "no-store",
+      });
+      if (directRes.ok) directProfile = await directRes.json();
+    } catch {}
+
     // Source of truth: search/global endpoint
     const searchQueries = [wallet, wallet.toLowerCase(), wallet.toUpperCase()];
     let match = null;
@@ -95,12 +108,17 @@ export async function GET(request) {
 
     if (!match) return NextResponse.json({ found: false });
 
+    const merged = {
+      ...match,
+      ...(directProfile || {}),
+    };
+
     return NextResponse.json({
       found: true,
-      username: match.name || match.username || null,
-      avatar: match.image || match.avatar || null,
-      verified: match.verification === "VERIFIED",
-      xp: extractXP(match),
+      username: merged.name || merged.username || null,
+      avatar: merged.image || merged.avatar || null,
+      verified: (merged.verification || "").toUpperCase() === "VERIFIED",
+      xp: extractXP(merged),
     });
 
   } catch {
