@@ -269,6 +269,7 @@ export default function Page() {
         transition: is1024 ? "transform 0.24s ease" : "width 0.2s ease",
         flexShrink: 0, position: "relative",
         overflow: "hidden",
+        cursor: collapsed && !is1024 ? "pointer" : "default",
         ...(is1024 ? {
           position: "fixed",
           left: 0,
@@ -277,6 +278,9 @@ export default function Page() {
           zIndex: 100,
           transform: collapsed ? "translateX(-100%)" : "translateX(0)",
         } : {}),
+      }}
+      onClickCapture={() => {
+        if (collapsed && !is1024) setCollapsed(false);
       }}>
 
         {/* Logo header */}
