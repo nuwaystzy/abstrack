@@ -85,6 +85,22 @@ export default function Page() {
             avatar: profileData.avatar || null,
             verified: !!profileData.verified,
           });
+        } else {
+          // Fallback: direct lookup when server-side profile lookup misses
+          const fallbackRes = await fetch(`https://backend.portal.abs.xyz/api/search/global?query=${targetWallet}`);
+          if (fallbackRes.ok) {
+            const fallbackData = await fallbackRes.json();
+            const users = fallbackData?.results?.users || [];
+            const match = users.find(u => u.address?.toLowerCase() === targetWallet.toLowerCase());
+            if (match) {
+              setProfile({
+                found: true,
+                username: match.name || null,
+                avatar: match.image || null,
+                verified: match.verification === "VERIFIED",
+              });
+            }
+          }
         }
       } catch {}
     } catch (e) {
