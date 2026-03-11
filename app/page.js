@@ -145,6 +145,12 @@ export default function Page() {
             avatar: profileData.avatar || null,
             verified: !!profileData.verified,
             xp: typeof profileData.xp === "number" ? profileData.xp : null,
+            tierV2:
+              typeof profileData.tierV2 === "number"
+                ? profileData.tierV2
+                : (typeof profileData.tierV2 === "string" && profileData.tierV2.trim() !== "" && !Number.isNaN(Number(profileData.tierV2)))
+                  ? Number(profileData.tierV2)
+                  : null,
             tierDisplayName: profileData.tierDisplayName || null,
             tierMainTier: profileData.tierMainTier || null,
           });
@@ -162,6 +168,12 @@ export default function Page() {
                 avatar: match.image || null,
                 verified: match.verification === "VERIFIED",
                 xp: extractUserXP(match),
+                tierV2:
+                  typeof match.tierV2 === "number"
+                    ? match.tierV2
+                    : (typeof match.tierV2 === "string" && match.tierV2.trim() !== "" && !Number.isNaN(Number(match.tierV2)))
+                      ? Number(match.tierV2)
+                      : null,
                 tierDisplayName: match.tier?.displayName || match.tierDisplayName || null,
                 tierMainTier: match.tier?.mainTier || match.tierMain || null,
               });
@@ -197,8 +209,12 @@ export default function Page() {
 
   const displayedWallet = scannedWallet || wallet;
   const userXP = typeof profile?.xp === "number" ? profile.xp : null;
+  const tierFromId =
+    typeof profile?.tierV2 === "number" && tiers.length > 0
+      ? (tiers.find((t) => Number(t?.id) === profile.tierV2) || null)
+      : null;
   const tierFromXP = userXP !== null && tiers.length > 0 ? getUserTier(userXP, tiers) : null;
-  const currentTier = tierFromXP || (profile?.tierDisplayName ? {
+  const currentTier = tierFromXP || tierFromId || (profile?.tierDisplayName ? {
     displayName: profile.tierDisplayName,
     mainTier: profile.tierMainTier || "silver",
   } : null);

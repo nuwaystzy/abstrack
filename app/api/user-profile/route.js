@@ -55,6 +55,17 @@ function extractTierInfo(user) {
   return { displayName, mainTier };
 }
 
+function extractTierV2(user) {
+  const candidates = [user?.tierV2, user?.tier_v2, user?.tierId, user?.tier_id];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
 function findBestMatch(candidates, wallet) {
   const target = normalizeAddress(wallet);
   if (!Array.isArray(candidates)) return null;
@@ -138,6 +149,7 @@ export async function GET(request) {
       avatar: merged.image || merged.avatar || null,
       verified: (merged.verification || "").toUpperCase() === "VERIFIED",
       xp: extractXP(merged),
+      tierV2: extractTierV2(merged),
       tierDisplayName: tier.displayName,
       tierMainTier: tier.mainTier,
     });
