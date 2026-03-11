@@ -5,7 +5,7 @@ export const metadata = {
   title: "AbsTrack",
   description: "Track which apps a wallet has interacted with on Abstract chain",
   icons: {
-    icon: "https://da0a8d63d0723a01b9d7d92ba8c7e1cf.cdn.bubble.io/cdn-cgi/image/w=192,h=192,f=auto,dpr=1,fit=contain/f1768235344559x240854847891804900/Abstract_AppIcon_DarkMode.png"
+    icon: "https://i.ibb.co.com/84GgW8z4/Poster-Menyambut-Ramadan-dalam-Gaya-Kartun-Ceria-3.png"
   },
 };
 
@@ -19,3 +19,4 @@ export default function RootLayout({ children }) {
     </html>
   );
 }
+

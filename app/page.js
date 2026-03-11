@@ -39,28 +39,6 @@ function getUserTier(xp, tiers) {
   return current;
 }
 
-function extractUserXP(user) {
-  const candidates = [
-    user?.xp,
-    user?.experience,
-    user?.totalXp,
-    user?.xpPoints,
-    user?.points,
-    user?.stats?.xp,
-    user?.profile?.xp,
-    user?.progress?.xp,
-    user?.tierProgress?.xp,
-    user?.tierProgress?.currentXp,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
-      return Number(value);
-    }
-  }
-  return null;
-}
-
 function CategoryBadge({ category }) {
   const c = CATEGORY_LABELS[category] || CATEGORY_LABELS.unknown;
   return (
@@ -154,31 +132,6 @@ export default function Page() {
             tierDisplayName: profileData.tierDisplayName || null,
             tierMainTier: profileData.tierMainTier || null,
           });
-        } else {
-          // Fallback: direct lookup when server-side profile lookup misses
-          const fallbackRes = await fetch(`https://backend.portal.abs.xyz/api/search/global?query=${targetWallet}`);
-          if (fallbackRes.ok) {
-            const fallbackData = await fallbackRes.json();
-            const users = fallbackData?.results?.users || [];
-            const match = users.find(u => u.address?.toLowerCase() === targetWallet.toLowerCase());
-            if (match) {
-              setProfile({
-                found: true,
-                username: match.name || null,
-                avatar: match.image || null,
-                verified: match.verification === "VERIFIED",
-                xp: extractUserXP(match),
-                tierV2:
-                  typeof match.tierV2 === "number"
-                    ? match.tierV2
-                    : (typeof match.tierV2 === "string" && match.tierV2.trim() !== "" && !Number.isNaN(Number(match.tierV2)))
-                      ? Number(match.tierV2)
-                      : null,
-                tierDisplayName: match.tier?.displayName || match.tierDisplayName || null,
-                tierMainTier: match.tier?.mainTier || match.tierMain || null,
-              });
-            }
-          }
         }
       } catch {}
     } catch (e) {
@@ -247,7 +200,7 @@ export default function Page() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
             <img
-              src="https://da0a8d63d0723a01b9d7d92ba8c7e1cf.cdn.bubble.io/cdn-cgi/image/w=192,h=192,f=auto,dpr=1,fit=contain/f1768235344559x240854847891804900/Abstract_AppIcon_DarkMode.png"
+              src="https://i.ibb.co.com/84GgW8z4/Poster-Menyambut-Ramadan-dalam-Gaya-Kartun-Ceria-3.png"
               alt="AbsTrack"
               style={{
                 width: 26,
@@ -799,6 +752,8 @@ export default function Page() {
     </div>
   );
 }
+
+
 
 
 
