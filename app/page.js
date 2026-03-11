@@ -200,7 +200,7 @@ export default function Page() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
             <img
-              src="https://i.ibb.co.com/84GgW8z4/Poster-Menyambut-Ramadan-dalam-Gaya-Kartun-Ceria-3.png"
+              src="https://i.postimg.cc/nzP2JwPr/Poster-Menyambut-Ramadan-dalam-Gaya-Kartun-Ceria-(5).png"
               alt="AbsTrack"
               style={{
                 width: 26,
@@ -752,6 +752,7 @@ export default function Page() {
     </div>
   );
 }
+
 
 
 
