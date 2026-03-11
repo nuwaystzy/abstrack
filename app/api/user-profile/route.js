@@ -6,7 +6,7 @@ const TIERS_TTL_MS = 5 * 60 * 1000;
 const COMMUNITY_TIER_IDS = Array.from({ length: 22 }, (_, i) => i + 1);
 const COMMUNITY_USERS_TTL_MS = 10 * 60 * 1000;
 const COMMUNITY_WALLET_TTL_MS = 60 * 60 * 1000;
-const communityTierUsersCache = new Map(); // tierId -> { at, users }
+const communityTierUsersCache = new Map(); // key(tier:page:limit) -> { at, users }
 const communityWalletTierCache = new Map(); // walletLower -> { at, tierV2 }
 const zaddyPageCache = new Map(); // page -> { at, rows, totalPages }
 
@@ -142,9 +142,10 @@ function extractUsersFromCommunityPayload(payload) {
   return [];
 }
 
-async function fetchCommunityUsersByTier(tierId) {
+async function fetchCommunityUsersByTier(tierId, page, limit) {
   const now = Date.now();
-  const cached = communityTierUsersCache.get(tierId);
+  const cacheKey = `${tierId}:${page}:${limit}`;
+  const cached = communityTierUsersCache.get(cacheKey);
   if (cached && now - cached.at < COMMUNITY_USERS_TTL_MS) {
     return cached.users;
   }
@@ -154,14 +155,14 @@ async function fetchCommunityUsersByTier(tierId) {
   const res = await fetch(url, {
     method: "POST",
     headers: getCommunityHeaders(),
-    body: JSON.stringify({ tier: tierId }),
+    body: JSON.stringify({ tier: tierId, page, limit }),
     cache: "no-store",
   });
   if (!res.ok) return [];
 
   const payload = await res.json();
   const users = extractUsersFromCommunityPayload(payload);
-  communityTierUsersCache.set(tierId, { at: now, users });
+  communityTierUsersCache.set(cacheKey, { at: now, users });
   return users;
 }
 
@@ -173,11 +174,26 @@ async function resolveTierFromCommunity(wallet) {
     return cached.tierV2;
   }
 
+  const maxPagesPerTier = Number(process.env.COMMUNITY_ABSLYSIS_MAX_PAGES || 30);
+  const pageSize = Number(process.env.COMMUNITY_ABSLYSIS_PAGE_SIZE || 200);
+
   for (const tierId of COMMUNITY_TIER_IDS) {
+    let previousFirstKey = null;
+    for (let page = 1; page <= maxPagesPerTier; page++) {
     try {
-      const users = await fetchCommunityUsersByTier(tierId);
+        const users = await fetchCommunityUsersByTier(tierId, page, pageSize);
+        if (!Array.isArray(users) || users.length === 0) break;
+
+        const first = users[0] || {};
+        const firstKey = `${normalizeAddress(first?.walletAddress || first?.address)}:${first?.id || ""}:${first?.name || ""}`;
+        if (firstKey && firstKey === previousFirstKey) break;
+        previousFirstKey = firstKey;
+
       const hit = users.find((u) => normalizeAddress(u?.walletAddress || u?.address) === normalized);
-      if (!hit) continue;
+        if (!hit) {
+          if (users.length < pageSize) break;
+          continue;
+        }
 
       const raw =
         hit?.tierV2 ??
@@ -192,7 +208,11 @@ async function resolveTierFromCommunity(wallet) {
         return tierV2;
       }
     } catch {
-      // Ignore per-tier request failure and continue.
+        // Ignore per-tier request failure and continue.
+    }
+      if (page === maxPagesPerTier) {
+        // Move on to next tier if max page scanned without hit.
+      }
     }
   }
   return null;
@@ -370,7 +390,7 @@ export async function GET(request) {
     let tierDisplayName = extractedTier.displayName;
     let tierMainTier = extractedTier.mainTier;
 
-    let tierSource = "official";
+    let tierSource = tierV2 !== null || tierDisplayName || tierMainTier ? "official" : "none";
     if (tierV2 === null && !tierDisplayName && !tierMainTier) {
       try {
         tierV2 = await resolveTierFromCommunity(wallet);
