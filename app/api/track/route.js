@@ -73,6 +73,42 @@ function isSuccessfulTx(tx) {
   return true;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchTxPage({ wallet, page, pageSize, apiKey }) {
+  const apiUrl = `https://api.etherscan.io/v2/api?chainid=${ABSTRACT_CHAIN_ID}&module=account&action=txlist&address=${wallet}&page=${page}&offset=${pageSize}&sort=desc&apikey=${apiKey}`;
+  const maxAttempts = 4;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(apiUrl, { headers: { Accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+      if (Array.isArray(data?.result)) return data.result;
+
+      const message = typeof data?.result === "string" ? data.result : "Invalid upstream response";
+      const isRetryable =
+        /rate limit|timeout|busy|temporarily|max rate/i.test(message) ||
+        /NOTOK/i.test(data?.status || "") ||
+        /HTTP 429/i.test(message);
+
+      if (!isRetryable) throw new Error(message);
+      lastErr = new Error(message);
+    } catch (err) {
+      lastErr = err;
+    }
+
+    // exponential backoff (250ms, 500ms, 1000ms, 2000ms)
+    await sleep(250 * Math.pow(2, attempt - 1));
+  }
+
+  throw lastErr || new Error("Failed to fetch transaction page");
+}
+
 export async function GET(request) {
   if (!API_KEY) {
     return NextResponse.json({ error: "Server misconfiguration: ETHERSCAN_API_KEY is missing." }, { status: 500 });
@@ -100,29 +136,16 @@ export async function GET(request) {
     let reachedCutoff = false;
 
     while (page <= MAX_PAGES && !reachedCutoff) {
-      const apiUrl = `https://api.etherscan.io/v2/api?chainid=${ABSTRACT_CHAIN_ID}&module=account&action=txlist&address=${wallet}&page=${page}&offset=${PAGE_SIZE}&sort=desc&apikey=${API_KEY}`;
-      const response = await fetch(apiUrl, { headers: { Accept: "application/json" } });
-      if (!response.ok) {
-        if (page === 1) throw new Error(`Upstream API failed with status ${response.status}`);
-        break;
-      }
-      const data = await response.json();
-      if (!Array.isArray(data.result)) {
-        if (page === 1) {
-          const upstreamMessage = typeof data?.result === "string" ? data.result : "Invalid upstream response";
-          throw new Error(upstreamMessage);
-        }
-        break;
-      }
-      if (data.result.length === 0) break;
+      const pageTxs = await fetchTxPage({ wallet, page, pageSize: PAGE_SIZE, apiKey: API_KEY });
+      if (pageTxs.length === 0) break;
 
       // Collect pages; stop only when the whole page is older than cutoff.
-      allTxns = allTxns.concat(data.result);
-      if (data.result.every(tx => now - parseInt(tx.timeStamp) >= TIME_CUTOFF)) {
+      allTxns = allTxns.concat(pageTxs);
+      if (pageTxs.every(tx => now - parseInt(tx.timeStamp) >= TIME_CUTOFF)) {
         reachedCutoff = true; break;
       }
 
-      if (data.result.length < PAGE_SIZE) break;
+      if (pageTxs.length < PAGE_SIZE) break;
       page++;
     }
 
