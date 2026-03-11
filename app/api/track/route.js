@@ -66,6 +66,13 @@ function timeAgo(timestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function isSuccessfulTx(tx) {
+  // Etherscan-like fields can vary by chain/indexer response
+  if (typeof tx?.txreceipt_status !== "undefined") return tx.txreceipt_status === "1";
+  if (typeof tx?.isError !== "undefined") return tx.isError === "0";
+  return true;
+}
+
 export async function GET(request) {
   if (!API_KEY) {
     return NextResponse.json({ error: "Server misconfiguration: ETHERSCAN_API_KEY is missing." }, { status: 500 });
@@ -81,10 +88,9 @@ export async function GET(request) {
   }
 
   try {
-    // Smart fetch caps (time-window still applied below).
-    // recent/24h raised to reduce undercount for active wallets.
+    // Fetch caps per window (post-filtered below)
     const PAGE_SIZE = 100;
-    const MAX_TXS = filter === "recent" ? 2000 : filter === "24h" ? 2000 : 2000;
+    const MAX_TXS = filter === "recent" ? 1500 : filter === "24h" ? 3000 : 5000;
     const MAX_PAGES = Math.ceil(MAX_TXS / PAGE_SIZE);
     const now = Math.floor(Date.now() / 1000);
     const TIME_CUTOFF = filter === "recent" ? 10800 : filter === "24h" ? 86400 : 604800; // recent=3h
@@ -110,9 +116,9 @@ export async function GET(request) {
       }
       if (data.result.length === 0) break;
 
-      // Always collect txns; stop early if we hit the time cutoff
+      // Collect pages; stop only when the whole page is older than cutoff.
       allTxns = allTxns.concat(data.result);
-      if (data.result.some(tx => now - parseInt(tx.timeStamp) >= TIME_CUTOFF)) {
+      if (data.result.every(tx => now - parseInt(tx.timeStamp) >= TIME_CUTOFF)) {
         reachedCutoff = true; break;
       }
 
@@ -125,8 +131,13 @@ export async function GET(request) {
     }
 
     let txns = allTxns;
-    // Apply time filter for all modes
+    const walletLower = wallet.toLowerCase();
+
+    // Align with Dune-style query semantics:
+    // from = wallet, success = true, within time window
     txns = txns.filter(tx => now - parseInt(tx.timeStamp) < TIME_CUTOFF);
+    txns = txns.filter(tx => tx?.from?.toLowerCase() === walletLower);
+    txns = txns.filter(isSuccessfulTx);
     if (txns.length > MAX_TXS) txns = txns.slice(0, MAX_TXS);
 
     const lastActive = txns[0]?.timeStamp
