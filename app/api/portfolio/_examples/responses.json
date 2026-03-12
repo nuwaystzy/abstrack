@@ -1,0 +1,51 @@
+{
+  "tokensExample": {
+    "wallet": "0x161f91374506a85ed9063e90c4c217d8697d6471",
+    "totalUsd": 1165.33,
+    "count": 5,
+    "tokens": [
+      {
+        "symbol": "ETH",
+        "name": "Ether",
+        "balance": 0.180042,
+        "priceUsd": 2039.12,
+        "valueUsd": 367.12,
+        "contractAddress": "native",
+        "icon": "data:image/svg+xml;base64,..."
+      },
+      {
+        "symbol": "ABX",
+        "name": "Aborean",
+        "balance": 1532454.13,
+        "priceUsd": 0.00275,
+        "valueUsd": 4214.74,
+        "contractAddress": "0x4c68e4102c0f120cce9f08625bd12079806b7c4d",
+        "icon": "https://..."
+      }
+    ]
+  },
+  "nftsExample": {
+    "wallet": "0x161f91374506a85ed9063e90c4c217d8697d6471",
+    "source": "alchemy+opensea",
+    "count": 3,
+    "totalEstimatedUsd": 2462.17,
+    "nfts": [
+      {
+        "contractAddress": "0xabc...",
+        "collectionName": "Gigaverse ROMs",
+        "collectionSlug": "gigaverse-roms-abstract",
+        "collectionImage": "https://...",
+        "image": "https://...",
+        "count": 18,
+        "floorPriceUsd": 105.15,
+        "topOfferUsd": 91.7,
+        "totalValueUsd": 1892.7,
+        "estimatedValueUsd": 1892.7,
+        "assetUrl": "https://opensea.io/collection/gigaverse-roms-abstract"
+      }
+    ],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}
+

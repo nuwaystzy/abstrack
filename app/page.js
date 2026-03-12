@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const CATEGORY_LABELS = {
   defi:    { label: "DeFi",    color: "#34d399", bg: "rgba(0,255,135,0.08)"   },
@@ -81,6 +81,14 @@ export default function Page() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1280);
+  const [portfolioData, setPortfolioData] = useState(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState(null);
+  const [portfolioTab, setPortfolioTab] = useState("tokens");
+  const [tokenSort, setTokenSort] = useState({ key: "valueUsd", dir: "desc" });
+  const [expandedNftGroups, setExpandedNftGroups] = useState({});
+  const [showAllNftGroups, setShowAllNftGroups] = useState(false);
+  const PORTFOLIO_ANALYTICS_RANGE = "7d";
 
   useEffect(() => {
     const updateViewport = () => {
@@ -102,16 +110,10 @@ export default function Page() {
 
   const NAV_ITEMS = [
     { id: "tracker", label: "Tracker", icon: "⬡", disabled: false },
-    { id: "portfolio", label: "Portfolio", icon: "◈", disabled: true },
+    { id: "portfolio", label: "Portfolio", icon: "◈", disabled: false, badge: "Beta" },
     { id: "alerts", label: "Alerts", icon: "◎", disabled: true },
     { id: "explore", label: "Explore", icon: "✦", disabled: true },
   ];
-
-  useEffect(() => {
-    if (activeNav === "portfolio" || activeNav === "alerts" || activeNav === "explore") {
-      setActiveNav("tracker");
-    }
-  }, [activeNav]);
 
   useEffect(() => {
     let mounted = true;
@@ -148,12 +150,62 @@ export default function Page() {
     return () => clearTimeout(timer);
   }, [wallet, searchFocused]);
 
+  const fetchPortfolioBundle = useCallback(async (targetWallet) => {
+    if (!targetWallet) return;
+    setPortfolioLoading(true);
+    setPortfolioError(null);
+    try {
+      const nftResUrl = `/api/portfolio/nfts?wallet=${encodeURIComponent(targetWallet)}&limit=50&all=1`;
+      const tokensRes = await fetch(`/api/portfolio/tokens?wallet=${encodeURIComponent(targetWallet)}`);
+      const tokensData = await tokensRes.json().catch(() => ({}));
+      if (!tokensRes.ok) throw new Error(tokensData?.error || "Failed to load token holdings");
+
+      const nftsRes = await fetch(nftResUrl);
+      const nftsData = await nftsRes.json().catch(() => ({}));
+      if (!nftsRes.ok) throw new Error(nftsData?.error || "Failed to load NFT holdings");
+
+      const gasRes = await fetch(`/api/portfolio/gas?wallet=${encodeURIComponent(targetWallet)}&range=${encodeURIComponent(PORTFOLIO_ANALYTICS_RANGE)}`);
+      const gasData = await gasRes.json().catch(() => ({}));
+      if (!gasRes.ok) throw new Error(gasData?.error || "Failed to load gas analytics");
+
+      const volumeRes = await fetch(`/api/portfolio/volume?wallet=${encodeURIComponent(targetWallet)}&range=${encodeURIComponent(PORTFOLIO_ANALYTICS_RANGE)}`);
+      const volumeData = await volumeRes.json().catch(() => ({}));
+      if (!volumeRes.ok) throw new Error(volumeData?.error || "Failed to load volume analytics");
+
+      setPortfolioData({
+        tokens: Array.isArray(tokensData?.tokens) ? tokensData.tokens : [],
+        nfts: Array.isArray(nftsData?.nfts) ? nftsData.nfts : [],
+        totals: {
+          tokenValueUsd: Number(tokensData?.totalUsd || 0),
+          nftValueUsd: Number(nftsData?.totalEstimatedUsd || 0),
+        },
+        gas: gasData,
+        volume: volumeData,
+      });
+      setExpandedNftGroups({});
+      setShowAllNftGroups(false);
+      setPortfolioTab("tokens");
+    } catch (e) {
+      setPortfolioData(null);
+      setPortfolioError(e.message || "Failed to load portfolio");
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, [PORTFOLIO_ANALYTICS_RANGE]);
+
   async function handleSearch(activeFilter = filter, walletOverride = wallet) {
     const input = walletOverride.trim();
     if (!input) return;
-    setLoading(true);
+    const scanNav = activeNav;
+    if (scanNav === "portfolio") {
+      setPortfolioLoading(true);
+      setPortfolioError(null);
+    } else {
+      setLoading(true);
+      setError(null);
+      setResults(null);
+    }
     setError(null);
-    setResults(null);
     setProfile(null);
     setCatFilter("all");
     try {
@@ -168,12 +220,16 @@ export default function Page() {
       const resolvedWallet = profileData?.resolvedWallet || fallbackWallet;
       if (!resolvedWallet) throw new Error("User or wallet not found");
 
-      // 2) Fetch track data using resolved wallet address
-      const trackRes = await fetch(`/api/track?wallet=${resolvedWallet}&filter=${activeFilter}`);
-      const data = await trackRes.json();
-      if (!trackRes.ok) throw new Error(data.error || "Failed to fetch");
-      setResults(data);
       setScannedWallet(resolvedWallet);
+      if (scanNav === "portfolio") {
+        await fetchPortfolioBundle(resolvedWallet);
+      } else {
+        // Fetch tracker only in tracker tab to avoid unnecessary API burst.
+        const trackRes = await fetch(`/api/track?wallet=${resolvedWallet}&filter=${activeFilter}`);
+        const data = await trackRes.json();
+        if (!trackRes.ok) throw new Error(data.error || "Failed to fetch");
+        setResults(data);
+      }
 
       try {
         if (!profileData?.found) {
@@ -197,9 +253,12 @@ export default function Page() {
         });
       } catch {}
     } catch (e) {
-      setError(e.message);
+      const msg = e.message || "Failed to scan";
+      if (scanNav === "portfolio") setPortfolioError(msg);
+      else setError(msg);
     } finally {
-      setLoading(false);
+      if (scanNav === "portfolio") setPortfolioLoading(false);
+      else setLoading(false);
     }
   }
 
@@ -245,6 +304,108 @@ export default function Page() {
   const profileHeaderDirection = is768 ? "column" : "row";
   const profileHeaderAlign = is768 ? "flex-start" : "center";
   const profileHeaderGap = is768 ? 10 : 12;
+  const portfolioTokens = Array.isArray(portfolioData?.tokens) ? [...portfolioData.tokens] : [];
+  const portfolioNfts = Array.isArray(portfolioData?.nfts) ? [...portfolioData.nfts] : [];
+  const nftGroups = portfolioNfts
+    .map((n) => {
+      const count = Math.max(1, Number(n?.count || 1));
+      const floorPriceUsd = Number(n?.floorPriceUsd || 0);
+      const topOfferUsd = Number(n?.topOfferUsd || 0);
+      const totalValueUsd = Number(n?.totalValueUsd || 0);
+      const contractAddress = String(n?.contractAddress || "").toLowerCase();
+      const sampleItems = Array.isArray(n?.samples) ? n.samples : [];
+      return {
+        contractAddress,
+        collectionName: n?.collectionName || "Unknown Collection",
+        collectionSlug: n?.collectionSlug || null,
+        collectionImage: n?.collectionImage || n?.image || null,
+        floorPriceUsd,
+        topOfferUsd,
+        totalValueUsd,
+        count,
+        assetUrl: n?.assetUrl || (n?.collectionSlug ? `https://opensea.io/collection/${n.collectionSlug}` : null),
+        items:
+          sampleItems.length > 0
+            ? sampleItems.map((s) => ({
+                ...s,
+                contractAddress: contractAddress || n?.contractAddress || "",
+                collectionName: n?.collectionName || "Unknown Collection",
+                floorPriceUsd,
+                topOfferUsd,
+                count: Math.max(1, Number(s?.count || s?.balance || 1)),
+                totalValueUsd: 0,
+              }))
+            : [{
+                contractAddress: contractAddress || n?.contractAddress || "",
+                collectionName: n?.collectionName || "Unknown Collection",
+                image: n?.image || n?.collectionImage || null,
+                tokenId: null,
+                count,
+                floorPriceUsd,
+                topOfferUsd,
+                totalValueUsd: 0,
+                assetUrl: n?.assetUrl || (n?.collectionSlug ? `https://opensea.io/collection/${n.collectionSlug}` : null),
+              }],
+      };
+    })
+    .sort((a, b) => b.totalValueUsd - a.totalValueUsd);
+  const visibleNftGroups = showAllNftGroups ? nftGroups : nftGroups.slice(0, 5);
+  const sortedPortfolioTokens = portfolioTokens.sort((a, b) => {
+    const dir = tokenSort.dir === "asc" ? 1 : -1;
+    if (tokenSort.key === "symbol") {
+      return dir * String(a.symbol || "").localeCompare(String(b.symbol || ""));
+    }
+    const av = Number(a?.[tokenSort.key] || 0);
+    const bv = Number(b?.[tokenSort.key] || 0);
+    return dir * (av - bv);
+  });
+
+  const portfolioTokenValue = Number(portfolioData?.totals?.tokenValueUsd || 0);
+  const portfolioNftValue = Number(portfolioData?.totals?.nftValueUsd || 0);
+  const portfolioNetWorth = portfolioTokenValue + portfolioNftValue;
+  const portfolioGasEth = Number(portfolioData?.gas?.valueEth || 0);
+  const portfolioVolumeUsd = Number(portfolioData?.volume?.valueUsd || 0);
+  const isScanLoading = activeNav === "portfolio" ? portfolioLoading : loading;
+
+  function fmtUsd(value) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(value || 0));
+  }
+
+  function fmtEth(value) {
+    return `${Number(value || 0).toFixed(4)} ETH`;
+  }
+
+  function onSortTokens(key) {
+    setTokenSort((prev) => {
+      if (prev.key === key) {
+        return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { key, dir: key === "symbol" ? "asc" : "desc" };
+    });
+  }
+
+  function toggleNftGroup(groupKey) {
+    setExpandedNftGroups((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey],
+    }));
+  }
+
+  function buildSparkline(values, width = 220, height = 44) {
+    const nums = (Array.isArray(values) ? values : []).map((v) => Number(v || 0)).filter((v) => Number.isFinite(v));
+    if (!nums.length) return null;
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    const span = Math.max(max - min, 1e-9);
+    const step = nums.length <= 1 ? width : width / (nums.length - 1);
+    return nums
+      .map((v, i) => {
+        const x = i * step;
+        const y = height - ((v - min) / span) * height;
+        return `${x},${y}`;
+      })
+      .join(" ");
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#000", color: "#e5e7eb", fontFamily: "'Inter',sans-serif", overflow: "hidden" }}>
@@ -377,6 +538,22 @@ export default function Page() {
                 {!collapsed && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0, width: "100%" }}>
                     <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>{item.label}</span>
+                    {!isDisabled && item.badge && (
+                      <span style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        letterSpacing: "0.02em",
+                        color: "#34d399",
+                        border: "1px solid #14532d",
+                        borderRadius: 999,
+                        padding: "2px 6px",
+                        marginLeft: 8,
+                        whiteSpace: "nowrap",
+                        background: "rgba(16,185,129,0.08)",
+                      }}>
+                        {item.badge}
+                      </span>
+                    )}
                     {isDisabled && (
                       <span style={{
                         fontSize: 9,
@@ -508,8 +685,14 @@ export default function Page() {
               </button>
             )}
             <div style={{ minWidth: 0 }}>
-              <span style={{ fontSize: is480 ? 14 : 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em" }}>Wallet Tracker</span>
-              {!is480 && <span style={{ fontSize: 12, color: "#555", marginLeft: 10 }}>Abstract chain · dapp analytics</span>}
+              <span style={{ fontSize: is480 ? 14 : 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em" }}>
+                {activeNav === "portfolio" ? "Portfolio Tracker" : "Wallet Tracker"}
+              </span>
+              {!is480 && (
+                <span style={{ fontSize: 12, color: "#555", marginLeft: 10 }}>
+                  {activeNav === "portfolio" ? "Abstract chain · wallet finance" : "Abstract chain · dapp analytics"}
+                </span>
+              )}
             </div>
           </div>
           <img
@@ -591,23 +774,23 @@ export default function Page() {
               <div style={{ width: 1, height: 30, background: "#20302a", opacity: 0.9 }} />
               <button
                 onClick={() => handleSearch()}
-                disabled={loading}
+                disabled={isScanLoading}
                 style={{
                   padding: searchBtnPadding,
                   borderRadius: 12,
-                  border: "1px solid " + (loading ? "#2b2b2b" : "#2f5f4c"),
-                  background: loading ? "#1b1b1b" : "linear-gradient(180deg,#1e2f29,#16211e)",
-                  color: loading ? "#666" : "#d9fceb",
+                  border: "1px solid " + (isScanLoading ? "#2b2b2b" : "#2f5f4c"),
+                  background: isScanLoading ? "#1b1b1b" : "linear-gradient(180deg,#1e2f29,#16211e)",
+                  color: isScanLoading ? "#666" : "#d9fceb",
                   fontWeight: 800,
                   fontSize: is480 ? 12 : 13,
-                  cursor: loading ? "not-allowed" : "pointer",
+                  cursor: isScanLoading ? "not-allowed" : "pointer",
                   flexShrink: 0,
                   letterSpacing: "0.02em",
-                  boxShadow: loading ? "none" : "0 8px 15px rgba(0,0,0,0.35), 0 0 0 1px rgba(52,211,153,0.14)",
+                  boxShadow: isScanLoading ? "none" : "0 8px 15px rgba(0,0,0,0.35), 0 0 0 1px rgba(52,211,153,0.14)",
                   transition: "all 0.2s ease",
                 }}
                 onMouseEnter={e => {
-                  if (loading) return;
+                  if (isScanLoading) return;
                   e.currentTarget.style.transform = "translateY(-2px)";
                   e.currentTarget.style.background = "linear-gradient(180deg,#2ac483,#22b377)";
                   e.currentTarget.style.color = "#062017";
@@ -615,7 +798,7 @@ export default function Page() {
                   e.currentTarget.style.borderColor = "#2ee59d";
                 }}
                 onMouseLeave={e => {
-                  if (loading) return;
+                  if (isScanLoading) return;
                   e.currentTarget.style.transform = "translateY(0)";
                   e.currentTarget.style.background = "linear-gradient(180deg,#1e2f29,#16211e)";
                   e.currentTarget.style.color = "#d9fceb";
@@ -623,15 +806,15 @@ export default function Page() {
                   e.currentTarget.style.borderColor = "#2f5f4c";
                 }}
                 onMouseDown={e => {
-                  if (loading) return;
+                  if (isScanLoading) return;
                   e.currentTarget.style.transform = "translateY(1px)";
                 }}
                 onMouseUp={e => {
-                  if (loading) return;
+                  if (isScanLoading) return;
                   e.currentTarget.style.transform = "translateY(-1px)";
                 }}
               >
-                {loading ? "Scanning..." : "Scan →"}
+                {isScanLoading ? "Scanning..." : "Scan →"}
               </button>
 
               {showSuggestions && searchFocused && wallet.trim() && (
@@ -742,32 +925,34 @@ export default function Page() {
             </div>
 
             {/* Filter tabs */}
-            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-              {[["recent","Recent · 3h"],["24h","Last 24h"],["7d","Last 7 Days"]].map(([val, label]) => (
-                <button key={val} onClick={() => changeFilter(val)}
-                  style={{
-                    padding: "6px 14px", borderRadius: 99, border: "none",
-                    background: filter === val ? "rgba(52,211,153,0.08)" : "rgba(255,255,255,0.02)",
-                    color: filter === val ? "#34d399" : "#4b5563",
-                    fontWeight: 600, fontSize: 12, cursor: "pointer",
-                    outline: filter === val ? "1px solid rgba(52,211,153,0.2)" : "1px solid #1a1a1a",
-                    transition: "all 0.15s",
-                  }}>{label}</button>
-              ))}
-            </div>
+            {activeNav === "tracker" ? (
+              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                {[["recent","Recent · 3h"],["24h","Last 24h"],["7d","Last 7 Days"]].map(([val, label]) => (
+                  <button key={val} onClick={() => changeFilter(val)}
+                    style={{
+                      padding: "6px 14px", borderRadius: 99, border: "none",
+                      background: filter === val ? "rgba(52,211,153,0.08)" : "rgba(255,255,255,0.02)",
+                      color: filter === val ? "#34d399" : "#4b5563",
+                      fontWeight: 600, fontSize: 12, cursor: "pointer",
+                      outline: filter === val ? "1px solid rgba(52,211,153,0.2)" : "1px solid #1a1a1a",
+                      transition: "all 0.15s",
+                    }}>{label}</button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {/* Error */}
-          {error && (
+          {((activeNav === "tracker" && error) || (activeNav === "portfolio" && portfolioError)) && (
             <div style={{
               padding: "12px 16px", borderRadius: 12, marginBottom: 16,
               background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)",
               color: "#ef4444", fontSize: 13,
-            }}>⚠ {error}</div>
+            }}>⚠ {activeNav === "tracker" ? error : portfolioError}</div>
           )}
 
           {/* Loading */}
-          {loading && (
+          {(activeNav === "tracker" ? loading : portfolioLoading) && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 0", gap: 12 }}>
               <div style={{
                 width: 36, height: 36, borderRadius: "50%",
@@ -775,12 +960,14 @@ export default function Page() {
                 animation: "spin 0.8s linear infinite",
               }} />
               <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-              <p style={{ fontSize: 13, color: "#555" }}>Scanning on-chain activity...</p>
+              <p style={{ fontSize: 13, color: "#555" }}>
+                {activeNav === "tracker" ? "Scanning on-chain activity..." : "Loading portfolio analytics..."}
+              </p>
             </div>
           )}
 
           {/* RESULTS */}
-          {results && !loading && (
+          {activeNav === "tracker" && results && !loading && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
               {/* Wallet header */}
@@ -1037,8 +1224,377 @@ export default function Page() {
             </div>
           )}
 
+          {/* PORTFOLIO RESULTS */}
+          {activeNav === "portfolio" && scannedWallet && !portfolioLoading && !portfolioError && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{
+                display: "flex", flexDirection: profileHeaderDirection, alignItems: profileHeaderAlign, justifyContent: "space-between",
+                padding: "14px 18px", borderRadius: 14,
+                background: "#0a0a0a", border: "1px solid #1a1a1a",
+                gap: profileHeaderGap,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                    background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.15)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 16, color: "#34d399", fontWeight: 800, overflow: "hidden",
+                  }}>
+                    {profile?.avatar
+                      ? <img src={profile.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : scannedWallet.slice(2, 4).toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{profile?.username || "Wallet"}</span>
+                      {profile?.verified && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
+                          background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.2)",
+                        }}>{`\u2713`} verified</span>
+                      )}
+                      {currentTier && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", padding: "2px 7px", borderRadius: 99,
+                          textTransform: "uppercase", color: tierColor, background: `${tierColor}14`, border: `1px solid ${tierColor}45`,
+                        }}>
+                          {currentTier.displayName || currentTier.name}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#555", fontFamily: "monospace" }}>
+                      {scannedWallet.slice(0,10)}...{scannedWallet.slice(-8)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ textAlign: is768 ? "left" : "right", width: is768 ? "100%" : "auto" }}>
+                  {results?.lastActive && results.lastActive !== "Unknown" && (
+                    <>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
+                        {results.lastActive}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>Last activity</div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: is768 ? "1fr 1fr" : "repeat(5, minmax(0, 1fr))", gap: 12 }}>
+                {[
+                  { label: "Net Worth", value: fmtUsd(portfolioNetWorth), color: "#34d399", note: null },
+                  { label: "Token Value", value: fmtUsd(portfolioTokenValue), color: "#60a5fa", note: null },
+                  { label: "NFT Value", value: fmtUsd(portfolioNftValue), color: "#a78bfa", note: null },
+                  { label: "Gas Spent", value: fmtEth(portfolioGasEth), color: "#f59e0b", note: "Last 7 days" },
+                  { label: "Volume", value: fmtUsd(portfolioVolumeUsd), color: "#22d3ee", note: "Last 7 days" },
+                ].map((s) => (
+                  <div key={s.label} style={{
+                    padding: "16px 18px", borderRadius: 14, background: "#0a0a0a", border: "1px solid #1a1a1a",
+                    position: "relative", overflow: "hidden",
+                  }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,${s.color}66,transparent)` }} />
+                    <div style={{ fontSize: is480 ? 18 : 22, fontWeight: 900, color: s.color, letterSpacing: "-0.02em" }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginTop: 5 }}>{s.label}</div>
+                    {s.note && (
+                      <div style={{ fontSize: 10, color: "#525252", marginTop: 2 }}>{s.note}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: 4,
+                  borderRadius: 999,
+                  border: "1px solid #1f2937",
+                  background: "#0b0d10",
+                  alignSelf: "flex-start",
+                  width: "fit-content",
+                }}
+              >
+                {[
+                  { id: "tokens", label: "Tokens" },
+                  { id: "nfts", label: "NFTs" },
+                ].map((tab) => {
+                  const active = portfolioTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setPortfolioTab(tab.id)}
+                      style={{
+                        border: "none",
+                        borderRadius: 999,
+                        padding: "8px 16px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        color: active ? "#d1fae5" : "#94a3b8",
+                        background: active ? "linear-gradient(135deg,#113126,#0b1f18)" : "transparent",
+                        boxShadow: active ? "inset 0 0 0 1px rgba(52,211,153,0.25)" : "none",
+                        transition: "all .16s ease",
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {portfolioTab === "tokens" && (
+              <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", overflowX: "auto", background: "#070809" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #1a1a1a", background: "#0a0a0a", color: "#fff", fontWeight: 700, fontSize: 13 }}>
+                  Token Holdings
+                </div>
+                <div style={{ minWidth: is768 ? 560 : "auto" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr",
+                    gap: 10, padding: "8px 18px", borderBottom: "1px solid #111",
+                    fontSize: 10, fontWeight: 700, color: "#525252", textTransform: "uppercase", letterSpacing: "0.08em",
+                  }}>
+                    <button onClick={() => onSortTokens("symbol")} style={{ background: "transparent", border: "none", color: "inherit", textAlign: "left", cursor: "pointer" }}>Token</button>
+                    <button onClick={() => onSortTokens("priceUsd")} style={{ background: "transparent", border: "none", color: "inherit", textAlign: "right", cursor: "pointer" }}>Price</button>
+                    <button onClick={() => onSortTokens("balance")} style={{ background: "transparent", border: "none", color: "inherit", textAlign: "right", cursor: "pointer" }}>Balance</button>
+                    <button onClick={() => onSortTokens("valueUsd")} style={{ background: "transparent", border: "none", color: "inherit", textAlign: "right", cursor: "pointer" }}>Value</button>
+                  </div>
+                  {sortedPortfolioTokens.length === 0 ? (
+                    <div style={{ padding: "28px 18px", color: "#525252", fontSize: 12 }}>No token holdings found.</div>
+                  ) : sortedPortfolioTokens.map((t) => (
+                    <div key={`${t.contractAddress}-${t.symbol}`} style={{
+                      display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr",
+                      gap: 10, padding: "11px 18px", borderBottom: "1px solid #0d0d0d", alignItems: "center",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                        <img src={t.icon} alt={t.symbol} style={{ width: 24, height: 24, borderRadius: 8, border: "1px solid #1f2937" }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#f3f4f6" }}>{t.symbol}</div>
+                          <div style={{ fontSize: 10, color: "#525252", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis" }}>{t.contractAddress}</div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 12, color: "#9ca3af" }}>{fmtUsd(t.priceUsd)}</div>
+                      <div style={{ textAlign: "right", fontSize: 12, color: "#9ca3af" }}>{Number(t.balance || 0).toLocaleString("en-US", { maximumFractionDigits: 6 })}</div>
+                      <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: "#34d399" }}>{fmtUsd(t.valueUsd)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
+              {portfolioTab === "nfts" && (
+              <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", background: "#070809", overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #1a1a1a", background: "#0a0a0a", color: "#fff", fontWeight: 700, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span>NFT Holdings</span>
+                  <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>
+                    Sorted by highest value
+                  </span>
+                </div>
+                <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {!is768 && (
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "1.6fr 70px 110px 110px 120px",
+                      gap: 10,
+                      padding: "0 12px 6px",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "#6b7280",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                    }}>
+                      <div>Assets</div>
+                      <div style={{ textAlign: "right" }}>Count</div>
+                      <div style={{ textAlign: "right" }}>Floor Price</div>
+                      <div style={{ textAlign: "right" }}>Top Offer</div>
+                      <div style={{ textAlign: "right" }}>Total Value</div>
+                    </div>
+                  )}
+                  {nftGroups.length === 0 ? (
+                    <div style={{ color: "#525252", fontSize: 12 }}>No NFT holdings found.</div>
+                  ) : visibleNftGroups.map((group) => {
+                    const groupKey = group.contractAddress || group.collectionName;
+                    const expanded = !!expandedNftGroups[groupKey];
+                    return (
+                      <div key={groupKey} style={{ border: "1px solid #1a1a1a", borderRadius: 12, background: "#0a0a0a", overflow: "hidden" }}>
+                        <button
+                          onClick={() => toggleNftGroup(groupKey)}
+                          style={{
+                            width: "100%",
+                            display: "grid",
+                            gridTemplateColumns: is768 ? "24px 1fr auto" : "24px 1.6fr 70px 110px 110px 120px",
+                            gap: 10,
+                            alignItems: "center",
+                            textAlign: "left",
+                            background: "linear-gradient(90deg,#0f1318,#0b0e13)",
+                            border: "none",
+                            color: "#e5e7eb",
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <span style={{
+                            width: 22,
+                            height: 22,
+                            borderRadius: 999,
+                            border: `1px solid ${expanded ? "#2c7a67" : "#273140"}`,
+                            color: expanded ? "#34d399" : "#94a3b8",
+                            background: expanded ? "rgba(7,29,23,0.85)" : "rgba(13,18,24,0.75)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 11,
+                            lineHeight: 1,
+                          }}>{expanded ? "▾" : "▸"}</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                            <img
+                              src={group.collectionImage || `/api/avatar?u=${encodeURIComponent(group.contractAddress || group.collectionName)}`}
+                              alt={group.collectionName}
+                              style={{ width: 30, height: 30, borderRadius: 9, objectFit: "cover", border: "1px solid #1f2937", flexShrink: 0 }}
+                            />
+                            <span style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.collectionName}</span>
+                          </div>
+                          {!is768 && <span style={{ fontSize: 12, color: "#e5e7eb", textAlign: "right", fontWeight: 700 }}>{group.count}</span>}
+                          {!is768 && <span style={{ fontSize: 12, color: "#9ca3af", textAlign: "right" }}>{group.floorPriceUsd ? fmtUsd(group.floorPriceUsd) : "—"}</span>}
+                          {!is768 && <span style={{ fontSize: 12, color: "#9ca3af", textAlign: "right" }}>{group.topOfferUsd > 0 ? fmtUsd(group.topOfferUsd) : "—"}</span>}
+                          {!is768 && <span style={{ fontSize: 12, color: "#34d399", textAlign: "right", fontWeight: 700 }}>{group.totalValueUsd > 0 ? fmtUsd(group.totalValueUsd) : "—"}</span>}
+                          {is768 && <span style={{ fontSize: 11, color: "#6b7280", textAlign: "right" }}>{group.count} NFTs · {group.topOfferUsd > 0 ? `Top ${fmtUsd(group.topOfferUsd)}` : "No top offer"}</span>}
+                        </button>
+
+                        {expanded && (
+                          <div style={{ borderTop: "1px solid #151922", background: "#090d12" }}>
+                            {group.items.map((n, idx) => (
+                              (() => {
+                                const itemCount = Math.max(1, Number(n.count || 1));
+                                const itemTopOffer = Number(n.topOfferUsd || 0);
+                                const itemFloor = Number(n.floorPriceUsd || 0);
+                                const isCollectionPlaceholder = !n.tokenId;
+                                const itemUnitValue = itemTopOffer > 0 ? itemTopOffer : itemFloor;
+                                const itemTotal = !isCollectionPlaceholder && itemUnitValue > 0 ? itemUnitValue * itemCount : 0;
+                                return (
+                              <a
+                                key={`${n.contractAddress}-${n.tokenId || "collection"}-${idx}`}
+                                href={n.assetUrl || (n.contractAddress && n.tokenId ? `https://opensea.io/assets/abstract/${n.contractAddress}/${n.tokenId}` : "#")}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: is768 ? "1fr auto" : "1.6fr 70px 110px 110px 120px",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  padding: "10px 12px",
+                                  borderTop: idx === 0 ? "none" : "1px solid #121821",
+                                  textDecoration: "none",
+                                  color: "inherit",
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                                  <img
+                                    src={n.image || group.collectionImage || `/api/avatar?u=${encodeURIComponent(group.contractAddress || group.collectionName)}`}
+                                    alt={n.collectionName}
+                                    style={{ width: 24, height: 24, borderRadius: 7, objectFit: "cover", border: "1px solid #1f2937", flexShrink: 0 }}
+                                  />
+                                  <span style={{ fontSize: 11, color: "#d1d5db", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {n.tokenId ? `${group.collectionName} #${n.tokenId}` : group.collectionName}
+                                  </span>
+                                </div>
+                                {!is768 && <span style={{ fontSize: 11, color: "#9ca3af", textAlign: "right" }}>{itemCount}</span>}
+                                {!is768 && <span style={{ fontSize: 11, color: "#9ca3af", textAlign: "right" }}>{itemFloor ? fmtUsd(itemFloor) : "—"}</span>}
+                                {!is768 && <span style={{ fontSize: 11, color: "#9ca3af", textAlign: "right" }}>{itemTopOffer ? fmtUsd(itemTopOffer) : "—"}</span>}
+                                {!is768 && <span style={{ fontSize: 11, color: "#34d399", textAlign: "right", fontWeight: 700 }}>{itemTotal ? fmtUsd(itemTotal) : "—"}</span>}
+                                {is768 && <span style={{ fontSize: 11, color: "#9ca3af", textAlign: "right" }}>{itemTopOffer ? fmtUsd(itemTopOffer) : "—"}</span>}
+                              </a>
+                                );
+                              })()
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {portfolioNfts.length > 0 && (
+                  <div style={{ padding: "0 14px 14px" }}>
+                    <button
+                      onClick={() => setShowAllNftGroups((prev) => !prev)}
+                      disabled={nftGroups.length <= 5}
+                      style={{
+                        width: "100%",
+                        borderRadius: 10,
+                        border: "1px solid " + (nftGroups.length <= 5 ? "#1f2937" : "#24463a"),
+                        background: nftGroups.length <= 5 ? "#0b0f0d" : "#0f1714",
+                        color: nftGroups.length <= 5 ? "#4b5563" : "#34d399",
+                        padding: "10px 12px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: nftGroups.length <= 5 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {nftGroups.length <= 5 ? "All NFTs shown" : showAllNftGroups ? "Show top 5 NFTs" : "Show all NFTs"}
+                    </button>
+                  </div>
+                )}
+              </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: is768 ? "1fr" : "1fr 1fr", gap: 12 }}>
+                <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", background: "#0a0a0a", padding: "14px 18px" }}>
+                  <div style={{ fontSize: 13, color: "#fff", fontWeight: 700 }}>Gas Analytics</div>
+                  <div style={{ marginTop: 10, height: 44 }}>
+                    {(() => {
+                      const points = Array.isArray(portfolioData?.gas?.points) ? portfolioData.gas.points.map((p) => p?.v || 0) : [];
+                      const poly = buildSparkline(points, 220, 40);
+                      return poly ? (
+                        <svg viewBox="0 0 220 44" width="100%" height="44" preserveAspectRatio="none">
+                          <polyline
+                            fill="none"
+                            stroke="#f59e0b"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            points={poly}
+                          />
+                        </svg>
+                      ) : (
+                        <div style={{ fontSize: 11, color: "#4b5563" }}>No chart data for selected timeframe.</div>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
+                    Last 7 days: {fmtEth(portfolioData?.gas?.breakdown?.["7d"])}
+                  </div>
+                </div>
+                <div style={{ borderRadius: 14, border: "1px solid #1a1a1a", background: "#0a0a0a", padding: "14px 18px" }}>
+                  <div style={{ fontSize: 13, color: "#fff", fontWeight: 700 }}>Volume Analytics</div>
+                  <div style={{ marginTop: 10, height: 44 }}>
+                    {(() => {
+                      const points = Array.isArray(portfolioData?.volume?.points) ? portfolioData.volume.points.map((p) => p?.vUsd || 0) : [];
+                      const poly = buildSparkline(points, 220, 40);
+                      return poly ? (
+                        <svg viewBox="0 0 220 44" width="100%" height="44" preserveAspectRatio="none">
+                          <polyline
+                            fill="none"
+                            stroke="#22d3ee"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            points={poly}
+                          />
+                        </svg>
+                      ) : (
+                        <div style={{ fontSize: 11, color: "#4b5563" }}>No chart data for selected timeframe.</div>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
+                    Last 7 days: {fmtUsd(portfolioData?.volume?.breakdownUsd?.["7d"])}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Empty state */}
-          {!results && !loading && !error && (
+          {activeNav === "tracker" && !results && !loading && !error && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 0", gap: 16 }}>
               <div style={{
                 width: 52, height: 52, borderRadius: 16,
@@ -1063,12 +1619,32 @@ export default function Page() {
               </div>
             </div>
           )}
+          {activeNav === "portfolio" && !scannedWallet && !portfolioLoading && !portfolioError && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 0", gap: 16 }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 16,
+                background: "#0a0a0a", border: "1px solid #1a1a1a",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 24,
+              }}>◈</div>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: 15, fontWeight: 700, color: "#374151" }}>No wallet loaded</p>
+                <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Scan wallet address or username to load portfolio</p>
+              </div>
+            </div>
+          )}
 
         </div>
       </main>
     </div>
   );
 }
+
+
+
+
+
+
 
 
 
