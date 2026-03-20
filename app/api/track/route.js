@@ -119,19 +119,49 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const wallet = searchParams.get("wallet");
   const requestedFilter = searchParams.get("filter") || "recent";
-  const filter = ["recent", "24h", "7d"].includes(requestedFilter) ? requestedFilter : "recent";
+  const fromParam = searchParams.get("from");
+  const toParam = searchParams.get("to");
+  const filter = ["recent", "24h", "7d", "custom"].includes(requestedFilter) ? requestedFilter : "recent";
 
   if (!wallet || !wallet.startsWith("0x") || wallet.length !== 42) {
     return NextResponse.json({ error: "Invalid wallet address." }, { status: 400 });
   }
 
+  let customFromTs = null;
+  let customToTs = null;
+  if (filter === "custom") {
+    const parsedFrom = fromParam ? Math.floor(new Date(fromParam).getTime() / 1000) : NaN;
+    const parsedTo = toParam ? Math.floor(new Date(toParam).getTime() / 1000) : NaN;
+    if (!Number.isFinite(parsedFrom) || !Number.isFinite(parsedTo)) {
+      return NextResponse.json({ error: "Invalid custom time range." }, { status: 400 });
+    }
+    if (parsedFrom >= parsedTo) {
+      return NextResponse.json({ error: "Custom range start must be earlier than end." }, { status: 400 });
+    }
+    customFromTs = parsedFrom;
+    customToTs = parsedTo;
+  }
+
   try {
     // Fetch caps per window (post-filtered below)
     const PAGE_SIZE = 100;
-    const MAX_TXS = filter === "recent" ? 1500 : filter === "24h" ? 3000 : 5000;
+    const customRangeSeconds = filter === "custom" ? Math.max(0, customToTs - customFromTs) : 0;
+    const MAX_TXS =
+      filter === "recent" ? 1500 :
+      filter === "24h" ? 3000 :
+      filter === "7d" ? 5000 :
+      customRangeSeconds <= 86400 ? 3000 :
+      customRangeSeconds <= 604800 ? 5000 :
+      8000;
     const MAX_PAGES = Math.ceil(MAX_TXS / PAGE_SIZE);
     const now = Math.floor(Date.now() / 1000);
-    const TIME_CUTOFF = filter === "recent" ? 10800 : filter === "24h" ? 86400 : 604800; // recent=3h
+    const TIME_CUTOFF = filter === "recent" ? 10800 : filter === "24h" ? 86400 : filter === "7d" ? 604800 : customRangeSeconds;
+    const isWithinSelectedRange = (timestamp) => {
+      const value = parseInt(timestamp, 10);
+      if (!Number.isFinite(value)) return false;
+      if (filter === "custom") return value >= customFromTs && value <= customToTs;
+      return now - value < TIME_CUTOFF;
+    };
 
     let allTxns = [];
     let page = 1;
@@ -143,7 +173,11 @@ export async function GET(request) {
 
       // Collect pages; stop only when the whole page is older than cutoff.
       allTxns = allTxns.concat(pageTxs);
-      if (pageTxs.every(tx => now - parseInt(tx.timeStamp) >= TIME_CUTOFF)) {
+      if (pageTxs.every((tx) => {
+        const value = parseInt(tx.timeStamp, 10);
+        if (!Number.isFinite(value)) return true;
+        return filter === "custom" ? value < customFromTs : now - value >= TIME_CUTOFF;
+      })) {
         reachedCutoff = true; break;
       }
 
@@ -160,7 +194,7 @@ export async function GET(request) {
 
     // Align with Dune-style query semantics:
     // from = wallet, success = true, within time window
-    txns = txns.filter(tx => now - parseInt(tx.timeStamp) < TIME_CUTOFF);
+    txns = txns.filter((tx) => isWithinSelectedRange(tx.timeStamp));
     txns = txns.filter(tx => tx?.from?.toLowerCase() === walletLower);
     txns = txns.filter(isSuccessfulTx);
     if (txns.length > MAX_TXS) txns = txns.slice(0, MAX_TXS);
