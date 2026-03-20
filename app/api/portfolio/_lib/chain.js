@@ -11,6 +11,7 @@ const DEX_PROFILE_CACHE = new Map();
 const CG_META_CACHE = new Map();
 const TRUST_ICON_CACHE = new Map();
 const PORTAL_TOKEN_META_CACHE = new Map();
+const PORTAL_WALLET_TOKEN_CACHE = new Map();
 const INFLIGHT = new Map();
 const ETH_PRICE_KEY = "eth-usd";
 const DEX_SCREENER_BASE = "https://api.dexscreener.com/latest/dex/tokens";
@@ -474,6 +475,65 @@ function extractPortalTokenAddress(token) {
   ).toLowerCase();
 }
 
+function extractPortalTokenBalance(token) {
+  const direct = Number(
+    token?.balanceUsdRaw ??
+      token?.rawBalance ??
+      token?.amount ??
+      token?.balance ??
+      token?.quantity ??
+      0
+  );
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const balance = Number(token?.balance || 0);
+  const decimals = Number(token?.decimals ?? token?.tokenDecimals ?? 18);
+  if (Number.isFinite(balance) && balance > 0 && Number.isFinite(decimals) && decimals >= 0) {
+    const scaled = balance / 10 ** decimals;
+    if (Number.isFinite(scaled) && scaled > 0) return scaled;
+  }
+  return 0;
+}
+
+function normalizePortalWalletToken(token) {
+  const contractAddress = extractPortalTokenAddress(token);
+  if (!contractAddress) return null;
+
+  const symbol = String(
+    token?.symbol || token?.tokenSymbol || token?.displaySymbol || ""
+  )
+    .trim()
+    .toUpperCase();
+  const name = String(token?.name || token?.tokenName || symbol || "Unknown Token").trim();
+  const decimals = Number(token?.decimals ?? token?.tokenDecimals ?? 18);
+  const balance = extractPortalTokenBalance(token);
+  const priceUsd = Number(
+    token?.priceUsd ??
+      token?.price ??
+      token?.tokenPrice ??
+      token?.usdPrice ??
+      0
+  );
+  const valueUsd = Number(
+    token?.valueUsd ??
+      token?.usdValue ??
+      token?.totalValueUsd ??
+      token?.amountUsd ??
+      0
+  );
+
+  return {
+    contractAddress,
+    symbol: symbol || "TOKEN",
+    name,
+    decimals: Number.isFinite(decimals) ? decimals : 18,
+    balance,
+    priceUsd: Number.isFinite(priceUsd) ? priceUsd : 0,
+    valueUsd: Number.isFinite(valueUsd) ? valueUsd : 0,
+    image: token?.image || token?.icon || token?.logo || null,
+  };
+}
+
 export async function fetchPortalTokenMetadata(contracts) {
   const out = {};
   const normalized = Array.from(
@@ -521,6 +581,49 @@ export async function fetchPortalTokenMetadata(contracts) {
     await sleep(120);
   }
   return out;
+}
+
+export async function fetchPortalWalletTokens(wallet) {
+  const key = String(wallet || "").toLowerCase();
+  if (!key) return [];
+
+  const hit = PORTAL_WALLET_TOKEN_CACHE.get(key);
+  if (hit && nowMs() - hit.at < META_TTL_MS) return hit.value;
+
+  const endpoints = [
+    `https://backend.portal.abs.xyz/api/user/${key}/wallet/v3/tokens?limit=200&includeAll=true`,
+    `https://backend.portal.abs.xyz/api/user/${key}/wallet/v2/tokens?limit=200&includeAll=true`,
+    `https://backend.portal.abs.xyz/api/user/${key}/wallet/tokens?limit=200&includeAll=true`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { cache: "no-store", headers: getPortalHeaders() });
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => ({}));
+      const tokens = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.tokens)
+          ? data.tokens
+          : Array.isArray(data?.results)
+            ? data.results
+            : Array.isArray(data?.items)
+              ? data.items
+              : [];
+
+      const normalized = tokens
+        .map(normalizePortalWalletToken)
+        .filter((item) => item && item.balance > 0);
+
+      PORTAL_WALLET_TOKEN_CACHE.set(key, { at: nowMs(), value: normalized });
+      return normalized;
+    } catch {
+      // try next endpoint
+    }
+  }
+
+  PORTAL_WALLET_TOKEN_CACHE.set(key, { at: nowMs(), value: [] });
+  return [];
 }
 
 function quickHash(seed) {

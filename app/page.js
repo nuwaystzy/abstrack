@@ -1,5 +1,5 @@
-"use client";
-import { useCallback, useEffect, useState } from "react";
+﻿"use client";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const CATEGORY_LABELS = {
   defi:    { label: "DeFi",    color: "#34d399", bg: "rgba(0,255,135,0.08)"   },
@@ -20,6 +20,42 @@ const TIER_COLORS = {
   diamond: "#4da3ff",
   obsidian: "#8b5cf6",
   ethereal: "#ff66ff",
+};
+
+const SIDEBAR_ICON_URLS = {
+  tracker: "https://www.nicepng.com/png/full/4-46246_objects-magnifying-glass-icon-transparent.png",
+  portfolio: "https://cdn-icons-png.flaticon.com/512/3360/3360459.png",
+  alerts: "https://img.icons8.com/ios11/512/FFFFFF/appointment-reminders--v2.png",
+  explore: "https://cdn-icons-png.freepik.com/256/117/117368.png",
+  settings: "https://cdn-icons-png.flaticon.com/512/3524/3524659.png",
+};
+
+const EMPTY_STATE_ICON_STYLE = {
+  width: 52,
+  height: 52,
+  borderRadius: 16,
+  background: "linear-gradient(180deg,#10271d 0%, #0e1814 52%, #0a0a0a 100%)",
+  border: "1px solid rgba(52,211,153,0.22)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxShadow: "0 0 0 1px rgba(52,211,153,0.08), 0 0 18px rgba(52,211,153,0.14), 0 0 32px rgba(16,185,129,0.12), inset 0 1px 0 rgba(255,255,255,0.04)",
+};
+
+const EMPTY_STATE_ICON_IMAGE_STYLE = {
+  width: 28,
+  height: 28,
+  objectFit: "contain",
+  display: "block",
+  filter: "brightness(0) saturate(100%) invert(80%) sepia(76%) saturate(674%) hue-rotate(85deg) brightness(94%) contrast(90%) drop-shadow(0 0 10px rgba(52,211,153,0.28))",
+};
+
+const SIDEBAR_ICON_FILTERS = {
+  active: "brightness(0) saturate(100%) invert(73%) sepia(37%) saturate(756%) hue-rotate(95deg) brightness(92%) contrast(89%)",
+  inactive: "brightness(0) saturate(100%) invert(31%) sepia(12%) saturate(480%) hue-rotate(186deg) brightness(94%) contrast(92%)",
+  disabled: "brightness(0) saturate(100%) invert(24%) sepia(11%) saturate(367%) hue-rotate(184deg) brightness(86%) contrast(88%) opacity(0.85)",
+  settingsActive: "brightness(0) saturate(100%) invert(56%) sepia(16%) saturate(214%) hue-rotate(181deg) brightness(97%) contrast(88%)",
+  settingsInactive: "brightness(0) saturate(100%) invert(37%) sepia(8%) saturate(330%) hue-rotate(183deg) brightness(82%) contrast(88%)",
 };
 
 async function fetchTiers() {
@@ -43,6 +79,45 @@ function isWalletAddress(value) {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
 
+function formatRangeSummary(fromValue, toValue) {
+  if (!fromValue || !toValue) return "";
+  const fromDate = new Date(fromValue);
+  const toDate = new Date(toValue);
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return "";
+  const sameYear = fromDate.getFullYear() === toDate.getFullYear();
+  const fromLabel = fromDate.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  const toLabel = toDate.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${fromLabel} - ${toLabel}`;
+}
+
+function toUtcStartOfDayIso(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString();
+}
+
+function toUtcEndExclusiveIso(value) {
+  if (!value) return null;
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0)).toISOString();
+}
+
+function getTodayLocalDateValue() {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
 function CategoryBadge({ category }) {
   const c = CATEGORY_LABELS[category] || CATEGORY_LABELS.unknown;
   return (
@@ -62,18 +137,26 @@ function CategoryBadge({ category }) {
 }
 
 export default function Page() {
-  const [wallet, setWallet] = useState("");
-  const [scannedWallet, setScannedWallet] = useState("");
+  const trackerRequestRef = useRef(0);
+  const portfolioRequestRef = useRef(0);
+  const [trackerWalletInput, setTrackerWalletInput] = useState("");
+  const [portfolioWalletInput, setPortfolioWalletInput] = useState("");
+  const [trackerScannedWallet, setTrackerScannedWallet] = useState("");
+  const [portfolioScannedWallet, setPortfolioScannedWallet] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("recent");
+  const [customRangeOpen, setCustomRangeOpen] = useState(false);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [collapsed, setCollapsed] = useState(false);
   const [activeNav, setActiveNav] = useState("tracker");
   const [showSettings, setShowSettings] = useState(false);
   const [fontSize, setFontSize] = useState("md");
-  const [profile, setProfile] = useState(null);
+  const [trackerProfile, setTrackerProfile] = useState(null);
+  const [portfolioProfile, setPortfolioProfile] = useState(null);
   const [tiers, setTiers] = useState([]);
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchHovered, setSearchHovered] = useState(false);
@@ -89,6 +172,16 @@ export default function Page() {
   const [expandedNftGroups, setExpandedNftGroups] = useState({});
   const [showAllNftGroups, setShowAllNftGroups] = useState(false);
   const PORTFOLIO_ANALYTICS_RANGE = "7d";
+  const todayDateValue = getTodayLocalDateValue();
+  const openNativeDateTimePicker = useCallback((event) => {
+    const input = event.currentTarget;
+    if (typeof input?.showPicker === "function") {
+      try {
+        input.showPicker();
+      } catch {}
+    }
+  }, []);
+
 
   useEffect(() => {
     const updateViewport = () => {
@@ -103,16 +196,27 @@ export default function Page() {
   const is480 = viewportWidth <= 480;
   const is768 = viewportWidth <= 768;
   const is1024 = viewportWidth <= 1024;
+  const activeWalletInput = activeNav === "portfolio" ? portfolioWalletInput : trackerWalletInput;
 
   useEffect(() => {
     if (is1024) setCollapsed(true);
   }, [is1024]);
 
+  useEffect(() => {
+    if (activeNav === "portfolio") {
+      trackerRequestRef.current += 1;
+      setLoading(false);
+    } else {
+      portfolioRequestRef.current += 1;
+      setPortfolioLoading(false);
+    }
+  }, [activeNav]);
+
   const NAV_ITEMS = [
-    { id: "tracker", label: "Tracker", icon: "⬡", disabled: false },
-    { id: "portfolio", label: "Portfolio", icon: "◈", disabled: false, badge: "Beta" },
-    { id: "alerts", label: "Alerts", icon: "◎", disabled: true },
-    { id: "explore", label: "Explore", icon: "✦", disabled: true },
+    { id: "tracker", label: "Tracker", iconUrl: SIDEBAR_ICON_URLS.tracker, disabled: false },
+    { id: "portfolio", label: "Portfolio", iconUrl: SIDEBAR_ICON_URLS.portfolio, disabled: false, badge: "Beta" },
+    { id: "alerts", label: "Alerts", iconUrl: SIDEBAR_ICON_URLS.alerts, disabled: true },
+    { id: "explore", label: "Explore", iconUrl: SIDEBAR_ICON_URLS.explore, disabled: true },
   ];
 
   useEffect(() => {
@@ -126,7 +230,7 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    const q = wallet.trim();
+    const q = activeWalletInput.trim();
     if (!q || !searchFocused) {
       setSuggestions([]);
       setLoadingSuggestions(false);
@@ -148,9 +252,9 @@ export default function Page() {
     }, 220);
 
     return () => clearTimeout(timer);
-  }, [wallet, searchFocused]);
+  }, [activeWalletInput, searchFocused]);
 
-  const fetchPortfolioBundle = useCallback(async (targetWallet) => {
+  const fetchPortfolioBundle = useCallback(async (targetWallet, requestId = portfolioRequestRef.current) => {
     if (!targetWallet) return;
     setPortfolioLoading(true);
     setPortfolioError(null);
@@ -158,20 +262,25 @@ export default function Page() {
       const nftResUrl = `/api/portfolio/nfts?wallet=${encodeURIComponent(targetWallet)}&limit=50&all=1`;
       const tokensRes = await fetch(`/api/portfolio/tokens?wallet=${encodeURIComponent(targetWallet)}`);
       const tokensData = await tokensRes.json().catch(() => ({}));
+      if (requestId !== portfolioRequestRef.current) return;
       if (!tokensRes.ok) throw new Error(tokensData?.error || "Failed to load token holdings");
 
       const nftsRes = await fetch(nftResUrl);
       const nftsData = await nftsRes.json().catch(() => ({}));
+      if (requestId !== portfolioRequestRef.current) return;
       if (!nftsRes.ok) throw new Error(nftsData?.error || "Failed to load NFT holdings");
 
       const gasRes = await fetch(`/api/portfolio/gas?wallet=${encodeURIComponent(targetWallet)}&range=${encodeURIComponent(PORTFOLIO_ANALYTICS_RANGE)}`);
       const gasData = await gasRes.json().catch(() => ({}));
+      if (requestId !== portfolioRequestRef.current) return;
       if (!gasRes.ok) throw new Error(gasData?.error || "Failed to load gas analytics");
 
       const volumeRes = await fetch(`/api/portfolio/volume?wallet=${encodeURIComponent(targetWallet)}&range=${encodeURIComponent(PORTFOLIO_ANALYTICS_RANGE)}`);
       const volumeData = await volumeRes.json().catch(() => ({}));
+      if (requestId !== portfolioRequestRef.current) return;
       if (!volumeRes.ok) throw new Error(volumeData?.error || "Failed to load volume analytics");
 
+      if (requestId !== portfolioRequestRef.current) return;
       setPortfolioData({
         tokens: Array.isArray(tokensData?.tokens) ? tokensData.tokens : [],
         nfts: Array.isArray(nftsData?.nfts) ? nftsData.nfts : [],
@@ -186,32 +295,44 @@ export default function Page() {
       setShowAllNftGroups(false);
       setPortfolioTab("tokens");
     } catch (e) {
+      if (requestId !== portfolioRequestRef.current) return;
       setPortfolioData(null);
       setPortfolioError(e.message || "Failed to load portfolio");
     } finally {
-      setPortfolioLoading(false);
+      if (requestId === portfolioRequestRef.current) setPortfolioLoading(false);
     }
   }, [PORTFOLIO_ANALYTICS_RANGE]);
 
-  async function handleSearch(activeFilter = filter, walletOverride = wallet) {
+  async function handleSearch(activeFilter = filter, walletOverride = activeWalletInput) {
     const input = walletOverride.trim();
     if (!input) return;
     const scanNav = activeNav;
+    const customFromIso = toUtcStartOfDayIso(customFrom);
+    const customToIso = toUtcEndExclusiveIso(customTo);
+    const effectiveFilter =
+      scanNav === "tracker" && activeFilter === "custom" && (!customFromIso || !customToIso)
+        ? "24h"
+        : activeFilter;
+    const requestId = scanNav === "portfolio"
+      ? ++portfolioRequestRef.current
+      : ++trackerRequestRef.current;
     if (scanNav === "portfolio") {
       setPortfolioLoading(true);
       setPortfolioError(null);
+      setPortfolioProfile(null);
     } else {
       setLoading(true);
       setError(null);
       setResults(null);
+      setTrackerProfile(null);
     }
-    setError(null);
-    setProfile(null);
     setCatFilter("all");
     try {
       // 1) Resolve username/wallet input through profile API
       const profileRes = await fetch(`/api/user-profile?query=${encodeURIComponent(input)}`);
       const profileData = await profileRes.json().catch(() => ({}));
+      if (scanNav === "portfolio" && requestId !== portfolioRequestRef.current) return;
+      if (scanNav === "tracker" && requestId !== trackerRequestRef.current) return;
       if (!profileRes.ok && !isWalletAddress(input)) {
         throw new Error(profileData?.error || "Failed to resolve user");
       }
@@ -220,23 +341,36 @@ export default function Page() {
       const resolvedWallet = profileData?.resolvedWallet || fallbackWallet;
       if (!resolvedWallet) throw new Error("User or wallet not found");
 
-      setScannedWallet(resolvedWallet);
       if (scanNav === "portfolio") {
-        await fetchPortfolioBundle(resolvedWallet);
+        setPortfolioScannedWallet(resolvedWallet);
+        await fetchPortfolioBundle(resolvedWallet, requestId);
+        if (requestId !== portfolioRequestRef.current) return;
       } else {
+        setTrackerScannedWallet(resolvedWallet);
         // Fetch tracker only in tracker tab to avoid unnecessary API burst.
-        const trackRes = await fetch(`/api/track?wallet=${resolvedWallet}&filter=${activeFilter}`);
+        const trackerParams = new URLSearchParams({
+          wallet: resolvedWallet,
+          filter: effectiveFilter,
+        });
+        if (effectiveFilter === "custom") {
+          trackerParams.set("from", customFromIso);
+          trackerParams.set("to", customToIso);
+        }
+        const trackRes = await fetch(`/api/track?${trackerParams.toString()}`);
         const data = await trackRes.json();
+        if (requestId !== trackerRequestRef.current) return;
         if (!trackRes.ok) throw new Error(data.error || "Failed to fetch");
         setResults(data);
+        if (activeFilter !== effectiveFilter) setFilter(effectiveFilter);
       }
 
       try {
         if (!profileData?.found) {
-          setProfile(null);
+          if (scanNav === "portfolio") setPortfolioProfile(null);
+          else setTrackerProfile(null);
           return;
         }
-        setProfile({
+        const nextProfile = {
           found: true,
           username: profileData.username || null,
           avatar: profileData.avatar || null,
@@ -250,21 +384,57 @@ export default function Page() {
                 : null,
           tierDisplayName: profileData.tierDisplayName || null,
           tierMainTier: profileData.tierMainTier || null,
-        });
+        };
+        if (scanNav === "portfolio") setPortfolioProfile(nextProfile);
+        else setTrackerProfile(nextProfile);
       } catch {}
     } catch (e) {
+      if (scanNav === "portfolio" && requestId !== portfolioRequestRef.current) return;
+      if (scanNav === "tracker" && requestId !== trackerRequestRef.current) return;
       const msg = e.message || "Failed to scan";
       if (scanNav === "portfolio") setPortfolioError(msg);
       else setError(msg);
     } finally {
-      if (scanNav === "portfolio") setPortfolioLoading(false);
-      else setLoading(false);
+      if (scanNav === "portfolio") {
+        if (requestId === portfolioRequestRef.current) setPortfolioLoading(false);
+      } else if (requestId === trackerRequestRef.current) {
+        setLoading(false);
+      }
     }
   }
 
   function changeFilter(val) {
+    if (val === "custom") {
+      setCustomRangeOpen(true);
+      setFilter("custom");
+      return;
+    }
     setFilter(val);
-    if (results) handleSearch(val, scannedWallet || wallet);
+    setCustomRangeOpen(false);
+    if (results) handleSearch(val, trackerScannedWallet || trackerWalletInput);
+  }
+
+  function applyCustomRange() {
+    const fromIso = toUtcStartOfDayIso(customFrom);
+    const toIso = toUtcEndExclusiveIso(customTo);
+    if (!fromIso || !toIso) {
+      setError(null);
+      setFilter("24h");
+      setCustomRangeOpen(false);
+      if (trackerScannedWallet || trackerWalletInput.trim()) {
+        handleSearch("24h", trackerScannedWallet || trackerWalletInput);
+      }
+      return;
+    }
+    if (new Date(fromIso).getTime() >= new Date(toIso).getTime()) {
+      setError("Start date must be earlier than end date.");
+      return;
+    }
+    setError(null);
+    setFilter("custom");
+    if (trackerScannedWallet || trackerWalletInput.trim()) {
+      handleSearch("custom", trackerScannedWallet || trackerWalletInput);
+    }
   }
 
   const visibleApps = results
@@ -281,16 +451,18 @@ export default function Page() {
     ? ["all", ...Object.keys(results.categories).filter(c => results.categories[c]?.length > 0)]
     : [];
 
-  const displayedWallet = scannedWallet || wallet;
-  const userXP = typeof profile?.xp === "number" ? profile.xp : null;
+  const activeScannedWallet = activeNav === "portfolio" ? portfolioScannedWallet : trackerScannedWallet;
+  const activeProfile = activeNav === "portfolio" ? portfolioProfile : trackerProfile;
+  const displayedWallet = activeScannedWallet || activeWalletInput;
+  const userXP = typeof activeProfile?.xp === "number" ? activeProfile.xp : null;
   const tierFromId =
-    typeof profile?.tierV2 === "number" && tiers.length > 0
-      ? (tiers.find((t) => Number(t?.id) === profile.tierV2) || null)
+    typeof activeProfile?.tierV2 === "number" && tiers.length > 0
+      ? (tiers.find((t) => Number(t?.id) === activeProfile.tierV2) || null)
       : null;
   const tierFromXP = userXP !== null && tiers.length > 0 ? getUserTier(userXP, tiers) : null;
-  const currentTier = tierFromXP || tierFromId || (profile?.tierDisplayName ? {
-    displayName: profile.tierDisplayName,
-    mainTier: profile.tierMainTier || "silver",
+  const currentTier = tierFromXP || tierFromId || (activeProfile?.tierDisplayName ? {
+    displayName: activeProfile.tierDisplayName,
+    mainTier: activeProfile.tierMainTier || "silver",
   } : null);
   const tierColor = currentTier?.mainTier ? (TIER_COLORS[currentTier.mainTier] || "#4b5563") : "#4b5563";
   const sidebarWidth = is1024 ? 220 : 200;
@@ -301,11 +473,30 @@ export default function Page() {
   const bodyFontSize = is320 ? 12 : is480 ? 13 : is768 ? 14 : 14;
   const searchBtnPadding = is480 ? "10px 14px" : "10px 18px";
   const searchInputFont = is480 ? 12 : 13;
+  const customRangeLabel = formatRangeSummary(customFrom, customTo);
+  const customRangeReady = Boolean(customFrom && customTo);
+  const customRangeInvalid = customRangeReady && new Date(customFrom).getTime() > new Date(customTo).getTime();
+  const customFromMax = customTo && customTo < todayDateValue ? customTo : todayDateValue;
   const profileHeaderDirection = is768 ? "column" : "row";
   const profileHeaderAlign = is768 ? "flex-start" : "center";
   const profileHeaderGap = is768 ? 10 : 12;
   const portfolioTokens = Array.isArray(portfolioData?.tokens) ? [...portfolioData.tokens] : [];
   const portfolioNfts = Array.isArray(portfolioData?.nfts) ? [...portfolioData.nfts] : [];
+
+  useEffect(() => {
+    if (activeNav !== "tracker" || filter !== "custom") return;
+    if (!customRangeReady || customRangeInvalid) return;
+    applyCustomRange();
+  }, [activeNav, filter, customFrom, customTo]);
+
+  useEffect(() => {
+    if (customFrom && customFrom > todayDateValue) {
+      setCustomFrom(todayDateValue);
+    }
+    if (customTo && customTo > todayDateValue) {
+      setCustomTo(todayDateValue);
+    }
+  }, [customFrom, customTo, todayDateValue]);
   const nftGroups = portfolioNfts
     .map((n) => {
       const count = Math.max(1, Number(n?.count || 1));
@@ -496,7 +687,11 @@ export default function Page() {
             return (
               <button
                 key={item.id}
-                onClick={!isDisabled ? () => setActiveNav(item.id) : undefined}
+                onClick={!isDisabled ? () => {
+                  setShowSuggestions(false);
+                  setSearchFocused(false);
+                  setActiveNav(item.id);
+                } : undefined}
                 aria-disabled={isDisabled}
                 tabIndex={isDisabled ? -1 : 0}
                 title={isDisabled ? `${item.label} - Coming soon` : item.label}
@@ -517,7 +712,7 @@ export default function Page() {
                   boxShadow: sidebarOpen && isActive ? "inset 0 1px 0 rgba(255,255,255,0.03)" : "none",
                 }}>
                 <span style={{
-                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
                   background: sidebarOpen
                     ? (isActive ? "#232833" : "#12151b")
                     : (isActive ? "#151922" : "#101318"),
@@ -534,7 +729,27 @@ export default function Page() {
                     ? (isActive ? "0 0 0 1px rgba(255,255,255,0.03), inset 0 1px 2px rgba(255,255,255,0.08)" : "inset 0 1px 1px rgba(255,255,255,0.04)")
                     : "none",
                   textAlign: "center",
-                }}>{item.icon}</span>
+                  overflow: "hidden",
+                }}>
+                  <img
+                    src={item.iconUrl}
+                    alt={item.label}
+                    style={{
+                      width: 21,
+                      height: 21,
+                      objectFit: "contain",
+                      display: "block",
+                      borderRadius: 4,
+                      filter: isDisabled
+                        ? SIDEBAR_ICON_FILTERS.disabled
+                        : isActive
+                          ? SIDEBAR_ICON_FILTERS.active
+                          : SIDEBAR_ICON_FILTERS.inactive,
+                      transform: isActive ? "scale(1.04)" : "scale(1)",
+                      transition: "filter 0.18s ease, transform 0.18s ease",
+                    }}
+                  />
+                </span>
                 {!collapsed && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0, width: "100%" }}>
                     <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>{item.label}</span>
@@ -596,13 +811,28 @@ export default function Page() {
         <div style={{ padding: "12px 0", display: "flex", justifyContent: "center", borderTop: "1px solid #1a1a1a" }}>
           <button onClick={e => { e.stopPropagation(); setShowSettings(s => !s); }}
             style={{
-              width: 36, height: 36, borderRadius: 10,
+              width: 38, height: 38, borderRadius: 10,
               background: showSettings ? "#232833" : "#12151b",
               border: showSettings ? "1px solid #353d4c" : "1px solid #1d222b",
-              color: showSettings ? "#34d399" : "#404040",
               boxShadow: showSettings ? "0 0 0 1px rgba(255,255,255,0.03), inset 0 1px 2px rgba(255,255,255,0.08)" : "inset 0 1px 1px rgba(255,255,255,0.04)",
-              cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
-            }}>⚙</button>
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              overflow: "hidden",
+            }}>
+            <img
+              src={SIDEBAR_ICON_URLS.settings}
+              alt="Settings"
+              style={{
+                width: 18,
+                height: 18,
+                objectFit: "contain",
+                display: "block",
+                borderRadius: 4,
+                filter: showSettings ? SIDEBAR_ICON_FILTERS.settingsActive : SIDEBAR_ICON_FILTERS.settingsInactive,
+                transform: showSettings ? "scale(1.04)" : "scale(1)",
+                transition: "filter 0.18s ease, transform 0.18s ease",
+              }}
+            />
+          </button>
         </div>
 
         {/* Settings panel */}
@@ -681,7 +911,7 @@ export default function Page() {
                   flexShrink: 0,
                 }}
               >
-                ☰
+                ?
               </button>
             )}
             <div style={{ minWidth: 0 }}>
@@ -735,20 +965,40 @@ export default function Page() {
               <span
                 aria-hidden
                 style={{
-                  fontSize: 21,
-                  lineHeight: 1,
+                  width: 21,
+                  height: 21,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   marginRight: 2,
-                  color: searchFocused || searchHovered ? "#34d399" : "#6b7280",
-                  transition: "color 0.2s ease",
+                  transition: "all 0.2s ease",
+                  flexShrink: 0,
                 }}
               >
-                ⌕
+                <img
+                  src="https://da0a8d63d0723a01b9d7d92ba8c7e1cf.cdn.bubble.io/cdn-cgi/image/w=192,h=192,f=auto,dpr=1.5,fit=contain/f1768235282843x762039647217121200/Abstract_Icon_OffWhite.png"
+                  alt="Search icon"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    opacity: searchFocused || searchHovered ? 1 : 0.82,
+                    filter: searchFocused || searchHovered
+                      ? "brightness(0) saturate(100%) invert(78%) sepia(18%) saturate(846%) hue-rotate(97deg) brightness(92%) contrast(86%)"
+                      : "brightness(0) saturate(100%) invert(51%) sepia(7%) saturate(481%) hue-rotate(102deg) brightness(91%) contrast(87%)",
+                    transition: "filter 0.2s ease, opacity 0.2s ease",
+                  }}
+                />
               </span>
               <input
                 type="text"
                 placeholder="Search by address or username..."
-                value={wallet}
-                onChange={e => setWallet(e.target.value)}
+                value={activeWalletInput}
+                onChange={e => {
+                  const nextValue = e.target.value;
+                  if (activeNav === "portfolio") setPortfolioWalletInput(nextValue);
+                  else setTrackerWalletInput(nextValue);
+                }}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
                 onFocus={() => {
                   setSearchFocused(true);
@@ -814,10 +1064,26 @@ export default function Page() {
                   e.currentTarget.style.transform = "translateY(-1px)";
                 }}
               >
-                {isScanLoading ? "Scanning..." : "Scan →"}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  {!isScanLoading && (
+                    <img
+                      src="https://da0a8d63d0723a01b9d7d92ba8c7e1cf.cdn.bubble.io/cdn-cgi/image/w=192,h=192,f=auto,dpr=1.5,fit=contain/f1768235282843x762039647217121200/Abstract_Icon_OffWhite.png"
+                      alt="Scan icon"
+                      style={{
+                        width: is480 ? 14 : 16,
+                        height: is480 ? 14 : 16,
+                        objectFit: "contain",
+                        opacity: 0.98,
+                        filter: "brightness(0) saturate(100%) invert(94%) sepia(17%) saturate(218%) hue-rotate(85deg) brightness(104%) contrast(98%)",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                  <span>{isScanLoading ? "Scanning..." : "Scan"}</span>
+                </span>
               </button>
 
-              {showSuggestions && searchFocused && wallet.trim() && (
+              {showSuggestions && searchFocused && activeWalletInput.trim() && (
                 <div style={{
                   position: "absolute",
                   top: "calc(100% + 10px)",
@@ -852,13 +1118,9 @@ export default function Page() {
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         const value = s.username || s.resolvedWallet || "";
-                        setWallet(value);
+                        if (activeNav === "portfolio") setPortfolioWalletInput(value);
+                        else setTrackerWalletInput(value);
                         setShowSuggestions(false);
-                        if (s.resolvedWallet) {
-                          handleSearch(filter, s.resolvedWallet);
-                        } else if (value) {
-                          handleSearch(filter, value);
-                        }
                       }}
                       style={{
                         width: "100%",
@@ -926,8 +1188,9 @@ export default function Page() {
 
             {/* Filter tabs */}
             {activeNav === "tracker" ? (
-              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                {[["recent","Recent · 3h"],["24h","Last 24h"],["7d","Last 7 Days"]].map(([val, label]) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[["recent","Recent · 3h"],["24h","Last 24h"],["7d","Last 7 Days"],["custom","Custom"]].map(([val, label]) => (
                   <button key={val} onClick={() => changeFilter(val)}
                     style={{
                       padding: "6px 14px", borderRadius: 99, border: "none",
@@ -938,6 +1201,123 @@ export default function Page() {
                       transition: "all 0.15s",
                     }}>{label}</button>
                 ))}
+                {filter === "custom" && customRangeLabel ? (
+                  <div style={{
+                    padding: "6px 14px",
+                    borderRadius: 99,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#a7f3d0",
+                    background: "rgba(52,211,153,0.08)",
+                    outline: "1px solid rgba(52,211,153,0.15)",
+                  }}>
+                    {customRangeLabel}
+                  </div>
+                ) : null}
+                </div>
+                <style>{`
+                  .custom-datetime-input::-webkit-calendar-picker-indicator {
+                    filter: brightness(0) invert(1);
+                    opacity: 1;
+                    cursor: pointer;
+                  }
+
+                  .custom-datetime-input::-webkit-calendar-picker-indicator:hover {
+                    opacity: 1;
+                  }
+                `}</style>
+                {(customRangeOpen || filter === "custom") && (
+                  <div style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 10,
+                    alignItems: "center",
+                    padding: is480 ? "10px" : "12px",
+                    borderRadius: 14,
+                    background: "rgba(255,255,255,0.02)",
+                    outline: "1px solid #1a1a1a",
+                  }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: is480 ? "100%" : 200 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.04em", textTransform: "uppercase" }}>Start</span>
+                      <input
+                        type="date"
+                        className="custom-datetime-input"
+                        value={customFrom}
+                        max={customFromMax}
+                        onChange={(e) => {
+                          const nextValue = e.target.value && e.target.value > todayDateValue
+                            ? todayDateValue
+                            : e.target.value;
+                          setCustomFrom(nextValue);
+                          if (customTo && nextValue && customTo < nextValue) {
+                            setCustomTo(nextValue);
+                          }
+                        }}
+                        onClick={openNativeDateTimePicker}
+                        onFocus={openNativeDateTimePicker}
+                        style={{
+                          background: "#0b0d0d",
+                          color: "#e5e7eb",
+                          border: "1px solid #1f2937",
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                          fontSize: 12,
+                          outline: "none",
+                          colorScheme: "dark",
+                          cursor: "pointer",
+                        }}
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: is480 ? "100%" : 200 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.04em", textTransform: "uppercase" }}>End</span>
+                      <input
+                        type="date"
+                        className="custom-datetime-input"
+                        value={customTo}
+                        min={customFrom || undefined}
+                        max={todayDateValue}
+                        onChange={(e) => {
+                          const nextValue = e.target.value && e.target.value > todayDateValue
+                            ? todayDateValue
+                            : e.target.value;
+                          setCustomTo(nextValue);
+                        }}
+                        onClick={openNativeDateTimePicker}
+                        onFocus={openNativeDateTimePicker}
+                        style={{
+                          background: "#0b0d0d",
+                          color: "#e5e7eb",
+                          border: "1px solid #1f2937",
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                          fontSize: 12,
+                          outline: "none",
+                          colorScheme: "dark",
+                          cursor: "pointer",
+                        }}
+                      />
+                    </label>
+                    <div style={{
+                      marginLeft: "auto",
+                      minWidth: is480 ? "100%" : 200,
+                      display: "flex",
+                      justifyContent: is480 ? "flex-start" : "flex-end",
+                      alignItems: "center",
+                    }}>
+                      <span style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: customRangeInvalid ? "#f87171" : customRangeReady ? "#34d399" : "#6b7280",
+                      }}>
+                        {customRangeInvalid
+                          ? "End date must be after start date."
+                          : customRangeReady
+                            ? "Auto applying selected range..."
+                            : "Select start and end date"}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
@@ -948,7 +1328,7 @@ export default function Page() {
               padding: "12px 16px", borderRadius: 12, marginBottom: 16,
               background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)",
               color: "#ef4444", fontSize: 13,
-            }}>⚠ {activeNav === "tracker" ? error : portfolioError}</div>
+            }}>? {activeNav === "tracker" ? error : portfolioError}</div>
           )}
 
           {/* Loading */}
@@ -986,22 +1366,22 @@ export default function Page() {
                     fontSize: 16, color: "#34d399", fontWeight: 800,
                     overflow: "hidden",
                   }}>
-                    {profile?.avatar
-                      ? <img src={profile.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {trackerProfile?.avatar
+                      ? <img src={trackerProfile.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       : displayedWallet.slice(2, 4).toUpperCase()
                     }
                   </div>
                   <div>
-                    {profile?.username && (
+                    {trackerProfile?.username && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{profile.username}</span>
-                        {profile.verified && (
+                        <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{trackerProfile.username}</span>
+                        {trackerProfile.verified && (
                           <span style={{
                             fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
                             background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.2)",
                           }}>{`\u2713`} verified</span>
                         )}
-                        {!profile.verified && (
+                        {!trackerProfile.verified && (
                           <span style={{
                             fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
                             background: "rgba(255,255,255,0.04)", color: "#555", border: "1px solid #1f1f1f",
@@ -1024,7 +1404,7 @@ export default function Page() {
                         )}
                       </div>
                     )}
-                    <div style={{ fontSize: 12, fontWeight: profile?.username ? 400 : 700, color: profile?.username ? "#555" : "#fff", fontFamily: "monospace" }}>
+                    <div style={{ fontSize: 12, fontWeight: trackerProfile?.username ? 400 : 700, color: trackerProfile?.username ? "#555" : "#fff", fontFamily: "monospace" }}>
                       {displayedWallet.slice(0,10)}...{displayedWallet.slice(-8)}
                     </div>
                   </div>
@@ -1038,7 +1418,7 @@ export default function Page() {
               {/* Stats */}
               <div style={{ display: "grid", gridTemplateColumns: statsColumns, gap: 12 }}>
                 {[
-                  { label: "Transactions", value: results.totalTxns, color: "#34d399", note: filter === "recent" ? "last 3h" : filter === "24h" ? "last 24h" : "last 7d" },
+                  { label: "Transactions", value: results.totalTxns, color: "#34d399", note: filter === "recent" ? "last 3h" : filter === "24h" ? "last 24h" : filter === "7d" ? "last 7d" : (customRangeLabel || "custom range") },
                   { label: "Apps Used",    value: results.uniqueApps, color: "#60a5fa", note: `${results.stats?.knownCount || 0} identified` },
                   { label: "Categories",  value: results.stats?.categories?.length || 0, color: "#a78bfa", note: results.stats?.categories?.map(c => CATEGORY_LABELS[c]?.label).filter(Boolean).join(", ") || "—" },
                 ].map(s => (
@@ -1111,7 +1491,7 @@ export default function Page() {
                 {/* Rows */}
                 {visibleApps.length === 0 ? (
                   <div style={{ padding: "48px 0", textAlign: "center", color: "#525252", fontSize: 13 }}>
-                    No interactions found.
+                    {filter === "custom" ? "No activity in selected range." : "No interactions found."}
                   </div>
                 ) : visibleApps.map((app, i) => {
                   const barPct = Math.round((app.count / totalVisibleCount) * 100);
@@ -1181,7 +1561,7 @@ export default function Page() {
                           <a href={app.url} target="_blank" rel="noopener noreferrer"
                             style={{ color: "#444", fontSize: 13, textDecoration: "none", transition: "color 0.15s" }}
                             onMouseEnter={e => e.target.style.color = "#34d399"}
-                            onMouseLeave={e => e.target.style.color = "#444"}>↗</a>
+                            onMouseLeave={e => e.target.style.color = "#444"}>?</a>
                         )}
                       </div>
                     </div>
@@ -1225,7 +1605,7 @@ export default function Page() {
           )}
 
           {/* PORTFOLIO RESULTS */}
-          {activeNav === "portfolio" && scannedWallet && !portfolioLoading && !portfolioError && (
+          {activeNav === "portfolio" && portfolioScannedWallet && !portfolioLoading && !portfolioError && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{
                 display: "flex", flexDirection: profileHeaderDirection, alignItems: profileHeaderAlign, justifyContent: "space-between",
@@ -1240,14 +1620,14 @@ export default function Page() {
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 16, color: "#34d399", fontWeight: 800, overflow: "hidden",
                   }}>
-                    {profile?.avatar
-                      ? <img src={profile.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      : scannedWallet.slice(2, 4).toUpperCase()}
+                    {portfolioProfile?.avatar
+                      ? <img src={portfolioProfile.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : portfolioScannedWallet.slice(2, 4).toUpperCase()}
                   </div>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{profile?.username || "Wallet"}</span>
-                      {profile?.verified && (
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{portfolioProfile?.username || "Wallet"}</span>
+                      {portfolioProfile?.verified && (
                         <span style={{
                           fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 99,
                           background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.2)",
@@ -1263,19 +1643,9 @@ export default function Page() {
                       )}
                     </div>
                     <div style={{ fontSize: 12, color: "#555", fontFamily: "monospace" }}>
-                      {scannedWallet.slice(0,10)}...{scannedWallet.slice(-8)}
+                      {portfolioScannedWallet.slice(0,10)}...{portfolioScannedWallet.slice(-8)}
                     </div>
                   </div>
-                </div>
-                <div style={{ textAlign: is768 ? "left" : "right", width: is768 ? "100%" : "auto" }}>
-                  {results?.lastActive && results.lastActive !== "Unknown" && (
-                    <>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
-                        {results.lastActive}
-                      </div>
-                      <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>Last activity</div>
-                    </>
-                  )}
                 </div>
               </div>
 
@@ -1444,7 +1814,7 @@ export default function Page() {
                             justifyContent: "center",
                             fontSize: 11,
                             lineHeight: 1,
-                          }}>{expanded ? "▾" : "▸"}</span>
+                          }}>{expanded ? "?" : "?"}</span>
                           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                             <img
                               src={group.collectionImage || `/api/avatar?u=${encodeURIComponent(group.contractAddress || group.collectionName)}`}
@@ -1596,12 +1966,13 @@ export default function Page() {
           {/* Empty state */}
           {activeNav === "tracker" && !results && !loading && !error && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 0", gap: 16 }}>
-              <div style={{
-                width: 52, height: 52, borderRadius: 16,
-                background: "#0a0a0a", border: "1px solid #1a1a1a",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 24,
-              }}>⬡</div>
+              <div style={EMPTY_STATE_ICON_STYLE}>
+                <img
+                  src={SIDEBAR_ICON_URLS.portfolio}
+                  alt="wallet icon"
+                  style={EMPTY_STATE_ICON_IMAGE_STYLE}
+                />
+              </div>
               <div style={{ textAlign: "center" }}>
                 <p style={{ fontSize: 15, fontWeight: 700, color: "#374151" }}>No wallet scanned</p>
                 <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Enter an Abstract chain wallet address or username above to get started</p>
@@ -1619,14 +1990,15 @@ export default function Page() {
               </div>
             </div>
           )}
-          {activeNav === "portfolio" && !scannedWallet && !portfolioLoading && !portfolioError && (
+          {activeNav === "portfolio" && !portfolioScannedWallet && !portfolioLoading && !portfolioError && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 0", gap: 16 }}>
-              <div style={{
-                width: 52, height: 52, borderRadius: 16,
-                background: "#0a0a0a", border: "1px solid #1a1a1a",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 24,
-              }}>◈</div>
+              <div style={EMPTY_STATE_ICON_STYLE}>
+                <img
+                  src={SIDEBAR_ICON_URLS.portfolio}
+                  alt="wallet icon"
+                  style={EMPTY_STATE_ICON_IMAGE_STYLE}
+                />
+              </div>
               <div style={{ textAlign: "center" }}>
                 <p style={{ fontSize: 15, fontWeight: 700, color: "#374151" }}>No wallet loaded</p>
                 <p style={{ fontSize: 13, color: "#404040", marginTop: 6 }}>Scan wallet address or username to load portfolio</p>
@@ -1639,6 +2011,12 @@ export default function Page() {
     </div>
   );
 }
+
+
+
+
+
+
 
 
 

@@ -5,6 +5,7 @@ import {
   fetchCoinGeckoTokenImages,
   fetchDexTokenProfiles,
   fetchEthUsdPrice,
+  fetchPortalWalletTokens,
   fetchPortalTokenMetadata,
   fetchNativeBalanceWei,
   fetchTokenPricesUsd,
@@ -31,9 +32,10 @@ export async function GET(request) {
 
   try {
     const walletLower = wallet.toLowerCase();
-    const [tokenTxs, alchemyTokens, ethUsd, nativeWei] = await Promise.all([
+    const [tokenTxs, alchemyTokens, portalWalletTokens, ethUsd, nativeWei] = await Promise.all([
       fetchWalletTokenTxs(wallet),
       fetchAlchemyTokenBalances(wallet),
+      fetchPortalWalletTokens(wallet),
       fetchEthUsdPrice(),
       fetchNativeBalanceWei(wallet),
     ]);
@@ -89,6 +91,31 @@ export async function GET(request) {
       }
     }
 
+    for (const t of portalWalletTokens) {
+      const key = String(t.contractAddress || "").toLowerCase();
+      if (!key) continue;
+      if (mergedMap.has(key)) {
+        const existing = mergedMap.get(key);
+        if (Number(t.balance || 0) > Number(existing.balance || 0)) existing.balance = Number(t.balance || 0);
+        if ((!existing.symbol || existing.symbol === "TOKEN") && t.symbol) existing.symbol = t.symbol;
+        if ((!existing.name || existing.name === "Unknown Token") && t.name) existing.name = t.name;
+        if (!existing.icon && t.image) existing.icon = t.image;
+        if (!existing.portalPriceUsd && Number(t.priceUsd || 0) > 0) existing.portalPriceUsd = Number(t.priceUsd || 0);
+        if (!existing.portalValueUsd && Number(t.valueUsd || 0) > 0) existing.portalValueUsd = Number(t.valueUsd || 0);
+      } else {
+        mergedMap.set(key, {
+          symbol: t.symbol || "TOKEN",
+          name: t.name || t.symbol || "Unknown Token",
+          balance: Number(t.balance || 0),
+          contractAddress: key,
+          decimals: Number(t.decimals || 18),
+          icon: t.image || null,
+          portalPriceUsd: Number(t.priceUsd || 0),
+          portalValueUsd: Number(t.valueUsd || 0),
+        });
+      }
+    }
+
     const tokenList = Array.from(mergedMap.values())
       .filter((t) => Number(t.balance || 0) > 0)
       .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0));
@@ -106,21 +133,32 @@ export async function GET(request) {
       trustIcons[c] = await resolveTrustWalletIcon(c);
     }
 
+    const ethLikeSymbols = new Set(["ETH", "WETH", "ABSETH", "STETH", "RETH"]);
+
     const enriched = tokenList
       .map((t) => {
-        const priceUsd = Number(prices[t.contractAddress] || 0);
-        const valueUsd = t.balance * priceUsd;
         const dexMeta = dexProfiles[t.contractAddress] || {};
         const cgMeta = coingeckoMeta[t.contractAddress] || {};
         const pMeta = portalMeta[t.contractAddress] || {};
+        const rawSymbol = String(pMeta.symbol || t.symbol || cgMeta.symbol || "").toUpperCase() || "TOKEN";
+        let priceUsd = Number(prices[t.contractAddress] || t.portalPriceUsd || 0);
+        if (priceUsd <= 0 && ethUsd > 0 && rawSymbol.includes("ETH")) {
+          priceUsd = ethUsd;
+        }
+        let valueUsd = t.balance * priceUsd;
+        if (valueUsd <= 0 && Number(t.portalValueUsd || 0) > 0) {
+          valueUsd = Number(t.portalValueUsd || 0);
+        }
         const icon =
+          t.icon ||
           pMeta.image ||
           cgMeta.image ||
           dexMeta.icon ||
           trustIcons[t.contractAddress] ||
-          t.icon ||
           buildBlockiesDataUri(t.contractAddress);
-        const iconSource = pMeta.image
+        const iconSource = t.icon
+          ? "portal-wallet"
+          : pMeta.image
           ? "portal"
           : cgMeta.image
             ? "coingecko"
@@ -136,7 +174,7 @@ export async function GET(request) {
             ? (priceUsd >= 1 ? "high" : priceUsd >= 0.01 ? "medium" : "low")
             : "unknown";
         return {
-          symbol: (pMeta.symbol || t.symbol || cgMeta.symbol || "").toUpperCase() || "TOKEN",
+          symbol: rawSymbol,
           name: pMeta.name || t.name || cgMeta.name || dexMeta.name || t.symbol || "Unknown Token",
           balance: t.balance,
           priceUsd,
@@ -149,7 +187,12 @@ export async function GET(request) {
       })
       // Hide spam + tiny dust. Keep legit low-price tokens if portfolio value is meaningful.
       .filter((t) => !SPAM_TOKEN_CONTRACTS.has(String(t.contractAddress || "").toLowerCase()))
-      .filter((t) => Number(t.valueUsd || 0) >= 1);
+      .filter((t) => {
+        const valueUsd = Number(t.valueUsd || 0);
+        if (valueUsd >= 1) return true;
+        if (ethLikeSymbols.has(String(t.symbol || "").toUpperCase()) && Number(t.balance || 0) > 0) return true;
+        return false;
+      });
 
     const nativeBalance = weiToEth(nativeWei);
     const wethPriceUsd =
