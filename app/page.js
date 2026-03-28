@@ -114,8 +114,10 @@ function toUtcEndExclusiveIso(value) {
 
 function getTodayLocalDateValue() {
   const now = new Date();
-  const offsetMs = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function CategoryBadge({ category }) {
@@ -414,29 +416,6 @@ export default function Page() {
     if (results) handleSearch(val, trackerScannedWallet || trackerWalletInput);
   }
 
-  function applyCustomRange() {
-    const fromIso = toUtcStartOfDayIso(customFrom);
-    const toIso = toUtcEndExclusiveIso(customTo);
-    if (!fromIso || !toIso) {
-      setError(null);
-      setFilter("24h");
-      setCustomRangeOpen(false);
-      if (trackerScannedWallet || trackerWalletInput.trim()) {
-        handleSearch("24h", trackerScannedWallet || trackerWalletInput);
-      }
-      return;
-    }
-    if (new Date(fromIso).getTime() >= new Date(toIso).getTime()) {
-      setError("Start date must be earlier than end date.");
-      return;
-    }
-    setError(null);
-    setFilter("custom");
-    if (trackerScannedWallet || trackerWalletInput.trim()) {
-      handleSearch("custom", trackerScannedWallet || trackerWalletInput);
-    }
-  }
-
   const visibleApps = results
     ? catFilter === "all"
       ? results.apps
@@ -486,8 +465,36 @@ export default function Page() {
   useEffect(() => {
     if (activeNav !== "tracker" || filter !== "custom") return;
     if (!customRangeReady || customRangeInvalid) return;
-    applyCustomRange();
-  }, [activeNav, filter, customFrom, customTo]);
+    const fromIso = toUtcStartOfDayIso(customFrom);
+    const toIso = toUtcEndExclusiveIso(customTo);
+    if (!fromIso || !toIso) {
+      setError(null);
+      setFilter("24h");
+      setCustomRangeOpen(false);
+      if (trackerScannedWallet || trackerWalletInput.trim()) {
+        handleSearch("24h", trackerScannedWallet || trackerWalletInput);
+      }
+      return;
+    }
+    if (new Date(fromIso).getTime() >= new Date(toIso).getTime()) {
+      setError("Start date must be earlier than end date.");
+      return;
+    }
+    setError(null);
+    if (trackerScannedWallet || trackerWalletInput.trim()) {
+      handleSearch("custom", trackerScannedWallet || trackerWalletInput);
+    }
+  }, [
+    activeNav,
+    customFrom,
+    customRangeInvalid,
+    customRangeReady,
+    customTo,
+    filter,
+    handleSearch,
+    trackerScannedWallet,
+    trackerWalletInput,
+  ]);
 
   useEffect(() => {
     if (customFrom && customFrom > todayDateValue) {
