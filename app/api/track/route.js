@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 
 const ABSTRACT_CHAIN_ID = 2741;
 const API_KEY = process.env.ETHERSCAN_API_KEY;
 
-// ─── DAPP REGISTRY (inline — no import needed) ───────────
+// â”€â”€â”€ DAPP REGISTRY (inline - no import needed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const DAPP_REGISTRY = [
   { name: "Abstract Bridge", category: "bridge", icon: "/api/avatar?u=AbstractChain", contracts: ["0x10919913673e0a7efb9b98e30d0cb3bb4fa9cb8c","0x0000000000000000000000000000000000008008"] },
   { name: "Abstract Global Wallet", category: "infra", icon: "/api/avatar?u=AbstractChain", contracts: ["0x0000000000000000000000000000000000008007","0x9b947df68d35281c972511b3e7bc875926f26c1a"] },
@@ -19,6 +19,7 @@ const DAPP_REGISTRY = [
   { name: "Kosmo (Objekt Minter)", category: "nft", icon: "/api/avatar?u=triplescosmos", contracts: ["0x569dcb7923866ba7198ee5b8c0c7a350f969218"] },
   { name: "OpenSea (Seaport)", category: "nft", icon: "/api/avatar?u=opensea", contracts: ["0x00000000000000adc04c56bf30ac9d3c0aaf14dc","0x0000000000000068f116a894984e2db1123eb395","0x00000000006c3852cbef3e08e8df289169ede581"] },
   { name: "Death Fun", category: "gaming", icon: "/api/avatar?u=DeathFunGame", contracts: ["0x27edd16ee56958fddcba08947f12c43ddec2b20c"] },
+  { name: "Rug Bakery", category: "gaming", icon: "https://abs.xyz/imagetransform/width=100,format=webp/https%3A%2F%2Fabstract-portal-metadata-prod.s3.amazonaws.com%2Ficons%2Fb18db798-0883-4530-ba93-8e8565e0d3be.png", contracts: ["0x080f7ad315ab65f02a821f072170d469d444a6c4"] },
   { name: "Aborean", category: "defi", icon: "/api/avatar?u=Aborean", contracts: ["0xc0f53703e9f4b79fa2fb09a2aeba487fa97729c9","0xa4890b89dc628bae614780079acc951fb0ecdc5f","0x4c68e4102c0f120cce9f08625bd12079806b7c4d","0xe8142d2f82036b6fc1e79e4ae85cf53fbffdc998","0x27b04370d8087e714a9f557c1eff7901cea6bb63","0x36cbf77d8f8355d7a077d670c29e290e41367072","0x5b4789afec36e61a74c15f898a3e45316b104cd7","0xe34be58e965a90ff3cbd42738651a630fb2552b4","0x4d8971d9932c1c0c16079722b3d93893f16bb065"] },
   { name: "Tollan Universe", category: "gaming", icon: "/api/avatar?u=TollanUniverse", contracts: ["0xc4d5107a91dd1271a4ea65a768a16aa64caca107"] },
   { name: "Ruyui", category: "gaming", icon: "/api/avatar?u=RuyuiFoundation", contracts: ["0x920fefb4e92dbba0393ba233cecb1051a0dde25c","0xf724aec8d4a4c88f4b475d412b1f50dc35c4ae3e"] },
@@ -52,7 +53,7 @@ for (const app of DAPP_REGISTRY) {
 function resolveAddress(address) {
   const app = LOOKUP.get(address?.toLowerCase());
   if (app) return { name: app.name, category: app.category, icon: app.icon, known: true };
-  return { name: `Contract ${address?.slice(0, 8)}...`, category: "unknown", icon: "❓", known: false };
+  return { name: `Contract ${address?.slice(0, 8)}...`, category: "unknown", icon: "â“", known: false };
 }
 
 function formatDate(timestamp) {
@@ -211,7 +212,7 @@ export async function GET(request) {
       ? `${timeAgo(latestAddressTx.timeStamp)} · ${formatDate(latestAddressTx.timeStamp)}`
       : "Unknown";
 
-    // Resolve all contract interactions — group by APP NAME (merge multi-contract apps)
+    // Resolve all contract interactions - group by APP NAME (merge multi-contract apps)
     const appMap = new Map(); // keyed by app name
     let unknownCount = 0;
     for (const tx of txns) {
@@ -268,5 +269,6 @@ export async function GET(request) {
     return NextResponse.json({ error: "Failed to fetch data. Please try again." }, { status: 500 });
   }
 }
+
 
 
